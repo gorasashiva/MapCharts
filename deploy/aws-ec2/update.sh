@@ -15,7 +15,11 @@ repo="$(cd -- "$script_dir/../.." && pwd)"
 deployed_file="$HOME/.candl-deployed-commit"
 cd "$repo"
 
-git pull --ff-only
+if [[ "${1:-}" != "--pulled" ]]; then
+  git pull --ff-only
+  # the pull may have changed this very script: run the new version from the top
+  exec "$script_dir/update.sh" --pulled
+fi
 echo "At $(git log -1 --format='%h %s')"
 
 "$script_dir/install-site.sh"
