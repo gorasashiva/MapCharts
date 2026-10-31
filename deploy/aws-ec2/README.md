@@ -37,10 +37,16 @@ ssh -i $CANDL_SSH_KEY $EC2 'uname -m && lsb_release -ds && df -h /'   # aarch64,
 
 ## 2. Copy the code and install
 
+*(on the instance)* clone from GitHub (deploy key for a private repo: see
+[DEPLOYMENT.md](../../DEPLOYMENT.md)), then install:
+
 ```sh
-./deploy/aws-ec2/push-code.sh $EC2
-ssh -i $CANDL_SSH_KEY $EC2 'cd ~/candl-platform && sudo ./deploy/aws-ec2/setup.sh $USER'
+git clone git@github.com:gorasashiva/MapCharts.git ~/candl-platform
+cd ~/candl-platform && sudo ./deploy/aws-ec2/setup.sh $USER
 ```
+
+Without GitHub access on the instance, `./deploy/aws-ec2/push-code.sh $EC2`
+from the Mac copies the folder instead.
 
 `setup.sh` installs Node 24 and Nginx, starts the three recorders (restarting
 on crash and on reboot) and ends with a status report. Re-running it is safe.
@@ -52,7 +58,8 @@ npm ci                                   # once, on the Mac
 ./deploy/aws-ec2/publish.sh $EC2         # build + upload; repeat after app changes
 ```
 
-After code changes to the recorders, run `push-code.sh` again (it restarts them).
+After code changes to the recorders: push to GitHub, then *(on the instance)*
+`cd ~/candl-platform && git pull && sudo systemctl restart candl-tape candl-book candl-map`.
 
 ## 4. Bring over what your Mac already recorded (optional)
 
