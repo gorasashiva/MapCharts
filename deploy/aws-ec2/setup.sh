@@ -57,8 +57,10 @@ install -d -m 0755 /etc/nginx/candl-auth.d
 install -m 0644 "$script_dir/nginx-candl.conf" /etc/nginx/conf.d/candl.conf
 if [[ -L /etc/nginx/sites-enabled/default ]]; then rm /etc/nginx/sites-enabled/default; fi
 nginx -t
-systemctl enable --now nginx
-systemctl reload nginx
+systemctl enable nginx
+# restart, not reload: a reload can't move a listener (127.0.0.1:8080 -> *:8080)
+# on the same port, and it reports success while nginx keeps the old one
+systemctl restart nginx
 
 echo "== chart app"
 sudo -u "$deploy_user" -H "$script_dir/install-site.sh"
