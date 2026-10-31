@@ -1,0 +1,75 @@
+{
+  "name": "prodserv",
+  "version": "0.1.0",
+  "description": "Data-agnostic canvas charting library — chart engine, drawing tools, technical indicators and CandLlabs experimental tools. Bring your own data.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "Rahul Sangam",
+  "homepage": "https://candl.live",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rahulsangam7/Candl.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rahulsangam7/Candl/issues"
+  },
+  "keywords": [
+    "charting",
+    "candlestick",
+    "technical-analysis",
+    "indicators",
+    "canvas",
+    "trading",
+    "fibonacci",
+    "drawing-tools",
+    "elliott-wave"
+  ],
+  "main": "./dist/candl-charts.cjs",
+  "module": "./dist/candl-charts.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/candl-charts.js",
+      "require": "./dist/candl-charts.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "dev": "vite",
+    "demo": "node scripts/dev-demo.mjs 5180",
+    "charts": "node scripts/dev-demo.mjs 5181",
+    "recorder": "node recorder/tapeRecorder.mjs",
+    "recorder:map": "node recorder/mapRecorder.mjs",
+    "recorder:book": "node recorder/bookRecorder.mjs",
+    "replay:dom": "vite-node recorder/replayDom.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build",
+    "build:site": "./site/build.sh",
+    "preview:site": "./site/build.sh && python3 -m http.server -d dist-site 8000"
+  },
+  "peerDependencies": {
+    "react": ">=17"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "react": "^18.3.1",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8",
+    "vite-plugin-dts": "^3.9.1",
+    "vitest": "^3.2.7"
+  }
+}

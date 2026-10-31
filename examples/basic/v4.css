@@ -1,0 +1,1374 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap');
+
+/* CandL V4 workspace — the approved redesign (design canvas "CandL V4 Redesign").
+   Loaded after index.html's styles and v3.css, so equal-specificity rules here win. */
+
+:root[data-theme='dark'] {
+  --app-bg: #07090d;
+  --bg: #07090d;
+  --chart-bg: #0a0d13;
+  --card: #0a0d13;
+  --panel: #10141b;
+  --panel-hover: #1c222d;
+  --raised: #141922;
+  --border: #1f2631;
+  --line: #161b24;
+  --text: #e6e9ef;
+  --muted: #8a93a3;
+  --accent: #4c7dff;
+  --up: #16c784;
+  --down: #ea3943;
+  --warn: #f59e0b;
+  --shadow: rgba(0, 0, 0, 0.5);
+}
+:root[data-theme='light'] {
+  --app-bg: #eef1f5;
+  --bg: #eef1f5;
+  --chart-bg: #ffffff;
+  --card: #ffffff;
+  --panel: #f4f6f9;
+  --panel-hover: #e8ecf2;
+  --raised: #ffffff;
+  --border: #dde2ea;
+  --line: #e3e7ee;
+  --text: #121620;
+  --muted: #5b6474;
+  --accent: #3b6cf6;
+  --up: #0f9f6e;
+  --down: #d92d3a;
+  --warn: #c26d00;
+  --shadow: rgba(16, 24, 40, 0.14);
+}
+
+#app,
+.modal-backdrop,
+.ctx-menu,
+.alert-toast {
+  font-family: 'Geist', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+#app {
+  background: var(--app-bg);
+}
+.tv-btn,
+.btn,
+button {
+  font-family: inherit;
+}
+
+/* ---------------------------------------------------------------- header */
+#tv-header {
+  height: 52px;
+  gap: 6px;
+  padding: 0 12px;
+  background: var(--app-bg);
+  border-bottom: 1px solid var(--line);
+}
+.brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 15px;
+}
+.tv-btn {
+  height: 36px;
+  border-radius: 9px;
+}
+.tv-btn:hover {
+  background: var(--panel-hover);
+}
+.symbol-btn {
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.symbol-input {
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+.interval-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.interval-group .iv-fav,
+.interval-group .iv-more {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 7px;
+  color: var(--muted);
+}
+.interval-group .iv-fav:hover,
+.interval-group .iv-more:hover {
+  color: var(--text);
+}
+.interval-group .iv-fav.active {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.mode-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.mode-toggle button {
+  height: 28px;
+  border-radius: 7px;
+}
+.mode-toggle button.active {
+  background: var(--panel-hover);
+  color: var(--text);
+  font-weight: 600;
+}
+.cmdk-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 240px;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  text-align: left;
+}
+.cmdk-btn:hover {
+  border-color: var(--muted);
+  color: var(--text);
+}
+.cmdk-btn svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+.cmdk-label {
+  flex: 1 1 auto;
+  white-space: nowrap;
+}
+.cmdk-btn kbd,
+.cp kbd,
+.cp-foot kbd {
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: 11px/18px 'Geist Mono', ui-monospace, monospace;
+}
+.save-btn {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  padding: 0 14px;
+  border-radius: 10px;
+}
+.save-btn:hover {
+  background: var(--accent);
+  filter: brightness(1.1);
+}
+/* Header priorities on narrower screens: the search box, then secondary labels, go icon-only. */
+#tv-header > * {
+  flex-shrink: 0;
+}
+@media (max-width: 1880px) {
+  .cmdk-btn {
+    width: 40px;
+    justify-content: center;
+  }
+  .cmdk-label,
+  .cmdk-btn kbd {
+    display: none;
+  }
+  .spot-controls > .tv-btn > span + span {
+    display: none;
+  }
+}
+@media (max-width: 1680px) {
+  .spot-controls .dd:not(.split-btn) > .tv-btn > span:nth-child(2):not(.chev):not(.iv-current),
+  #tv-header > .dd > .tv-btn > span:nth-child(2):not(.chev),
+  .save-btn > span + span {
+    display: none;
+  }
+  .save-btn {
+    padding: 0 10px;
+  }
+}
+@media (max-width: 1280px) {
+  .interval-group .iv-fav:nth-of-type(n + 5) {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------- body: cards */
+#tv-body {
+  position: relative;
+  gap: 8px;
+  padding: 8px 8px 0;
+  background: var(--app-bg);
+}
+#grid {
+  --chart-inset: 54px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--line);
+}
+#tv-body:has(#tv-rail.collapsed) #grid {
+  --chart-inset: 34px;
+}
+#options,
+#gexdash {
+  border-radius: 14px;
+  overflow: hidden;
+}
+#tv-watchlist,
+#tv-buddy,
+#tv-paper {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+  overflow: hidden;
+}
+#tv-watchlist {
+  width: 320px;
+}
+#tv-widgetbar {
+  align-self: flex-start;
+  width: 48px;
+  padding: 6px 0;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+}
+.wb-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+}
+.wb-btn.active {
+  background: var(--panel-hover);
+  color: var(--accent);
+}
+#tv-footer {
+  height: 40px;
+  padding: 0 12px;
+  border: 0;
+  background: var(--app-bg);
+}
+.foot-btn {
+  height: 26px;
+  border-radius: 7px;
+}
+.foot-btn.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+.pane {
+  background: var(--chart-bg);
+}
+
+/* ---------------------------------------------------------------- floating drawing toolbar */
+#tv-rail {
+  position: absolute;
+  left: 18px;
+  top: 18px;
+  z-index: 40;
+  width: auto;
+  max-height: calc(100% - 44px);
+  padding: 6px;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  /* No backdrop blur: at 94% opacity it is invisible, but re-blurring the live chart behind it costs GPU every frame. */
+  box-shadow: 0 10px 30px var(--shadow);
+}
+.rail-tools {
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+/* A scroll container clips anything outside it, which hid the tool flyouts
+   (they open to the right of the rail). Let them out while one is open. */
+#tv-rail:not(.collapsed) .rail-tools:has(.rail-item.open) {
+  overflow: visible;
+}
+.rail-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+.rail-btn svg {
+  width: 18px;
+  height: 18px;
+}
+.rail-item.active .rail-btn {
+  background: var(--panel-hover);
+  color: var(--accent);
+}
+.rail-div {
+  width: 20px;
+  margin: 4px 0;
+}
+.rail-grow {
+  display: none;
+}
+#tv-rail .rail-collapse {
+  width: 32px;
+  height: 22px;
+  margin-top: 2px;
+}
+#tv-rail .rail-collapse svg {
+  transform: rotate(90deg);
+}
+#tv-rail.collapsed {
+  width: auto;
+  padding: 4px;
+}
+#tv-rail.collapsed .rail-collapse {
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  border-radius: 7px;
+}
+#tv-rail.collapsed .rail-collapse svg {
+  transform: rotate(-90deg);
+  width: 14px;
+}
+.rail-flyout {
+  border-radius: 10px;
+  background: var(--raised);
+}
+
+/* Chart chrome clears the floating toolbar. */
+.pane-head {
+  left: calc(var(--chart-inset, 0px) + 6px);
+}
+.tool-legend {
+  left: calc(var(--chart-inset, 0px) + 4px) !important;
+}
+.tool-legend-row {
+  min-height: 22px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--chart-bg) 82%, transparent);
+}
+.legend-more {
+  height: 18px;
+  border-radius: 9px;
+}
+
+/* ---------------------------------------------------------------- dropdowns / menus */
+.dd-menu,
+.rail-flyout,
+.ctx-menu {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--raised);
+  box-shadow: 0 20px 50px var(--shadow);
+}
+.menu-item {
+  border-radius: 7px;
+}
+.menu-head {
+  font-weight: 600;
+}
+.sync-row input {
+  accent-color: var(--accent);
+}
+.cmp-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+.ctx-menu {
+  min-width: 260px;
+  padding: 6px;
+}
+.ctx-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 7px;
+}
+.ctx-item:hover {
+  background: var(--panel-hover);
+}
+.ctx-hint {
+  color: var(--muted);
+  font: 11px 'Geist Mono', ui-monospace, monospace;
+}
+.ctx-sep {
+  margin: 4px 6px;
+}
+
+/* ---------------------------------------------------------------- zoom pill */
+.zoom-pill {
+  position: absolute;
+  left: 50%;
+  bottom: 40px;
+  z-index: 23;
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  /* No backdrop blur (94% opaque — invisible, but costly over the live chart). */
+  transform: translate(-50%, 6px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.pane-canvas:hover .zoom-pill,
+.zoom-pill:focus-within {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  pointer-events: auto;
+}
+.zp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 28px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.zp-btn:hover {
+  background: var(--panel-hover);
+}
+.zp-btn svg {
+  width: 16px;
+  height: 16px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .zoom-pill {
+    transition: none;
+  }
+}
+
+/* ---------------------------------------------------------------- drawing style toolbar */
+.dsb {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 26;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--raised) 96%, transparent);
+  box-shadow: 0 12px 30px var(--shadow);
+  will-change: transform;
+}
+.dsb-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.dsb-btn:hover {
+  background: var(--panel-hover);
+}
+.dsb-btn.on {
+  color: var(--accent);
+}
+.dsb-btn.danger {
+  color: var(--down);
+}
+.dsb-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
+}
+.dsb-mono {
+  font: 12px 'Geist Mono', ui-monospace, monospace;
+}
+.dsb-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--border);
+}
+.dsb-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  z-index: 27;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 120px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--raised);
+  box-shadow: 0 16px 40px var(--shadow);
+}
+.dsb-menu.dsb-colors {
+  display: grid;
+  grid-template-columns: repeat(5, 22px);
+  gap: 6px;
+  min-width: 0;
+}
+.dsb-color {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+.dsb-color.on {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+.dsb-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.dsb-item:hover,
+.dsb-item.on {
+  background: var(--panel-hover);
+}
+.dsb-line {
+  display: inline-block;
+  width: 28px;
+  background: currentColor;
+  border-radius: 2px;
+}
+
+/* ---------------------------------------------------------------- watchlist (V4) */
+.watchlist-row {
+  grid-template-columns: 24px minmax(0, 1fr) 44px 80px 54px;
+}
+.wl-cols {
+  grid-template-columns: minmax(0, 1fr) 80px 54px;
+}
+.wl-spark {
+  width: 44px;
+  height: 18px;
+}
+.wl-spark path {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+}
+.watchlist-row.wl-up .wl-spark path {
+  stroke: var(--up);
+}
+.watchlist-row.wl-down .wl-spark path {
+  stroke: var(--down);
+}
+.watchlist-price,
+.wl-abs,
+.watchlist-change,
+.sd-price,
+.sd-tile b {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+}
+
+/* ---------------------------------------------------------------- symbol details: 24h tiles */
+.sd-stats4 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.sd-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--panel);
+}
+.sd-tile span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.sd-tile b {
+  font-weight: 500;
+  font-size: 13px;
+}
+.sd-tile b.up {
+  color: var(--up);
+}
+.sd-tile b.down {
+  color: var(--down);
+}
+.sd-card {
+  background: var(--card);
+}
+
+/* ---------------------------------------------------------------- alerts + order book panels */
+.al-sym {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 13px;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.al-sym:hover {
+  color: var(--accent);
+}
+.al-row .mi-icon {
+  opacity: 1;
+}
+.ob-sym {
+  margin-right: auto;
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.ob {
+  font: 12px 'Geist Mono', ui-monospace, monospace;
+  padding: 6px 0 12px;
+}
+.ob-row {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  height: 22px;
+  align-items: center;
+  padding: 0 14px;
+}
+.ob-hdr {
+  color: var(--muted);
+  font-family: 'Geist', sans-serif;
+  font-size: 11px;
+}
+.ob-bar {
+  position: absolute;
+  right: 0;
+  top: 2px;
+  bottom: 2px;
+  opacity: 0.16;
+  border-radius: 3px 0 0 3px;
+}
+.ob-row.ask .ob-bar {
+  background: var(--down);
+}
+.ob-row.bid .ob-bar {
+  background: var(--up);
+}
+.ob-row.ask .ob-p {
+  color: var(--down);
+}
+.ob-row.bid .ob-p {
+  color: var(--up);
+}
+.ob-p,
+.ob-q {
+  position: relative;
+}
+.ob-spread {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 4px 0;
+  padding: 8px 14px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.ob-spread b {
+  font-size: 15px;
+  font-weight: 600;
+}
+.ob-spread span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* ---------------------------------------------------------------- chart settings dialog */
+.cs-dialog {
+  position: relative;
+  display: flex;
+  width: min(720px, calc(100vw - 32px));
+  height: min(560px, calc(100vh - 48px));
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--raised);
+  color: var(--text);
+  box-shadow: 0 24px 64px var(--shadow);
+  overflow: hidden;
+}
+.cs-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 0 0 180px;
+  padding: 14px 10px;
+  border-right: 1px solid var(--line);
+}
+.cs-title {
+  padding: 4px 10px 12px;
+  font-size: 15px;
+  font-weight: 700;
+}
+.cs-tab {
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+}
+.cs-tab:hover {
+  background: var(--panel-hover);
+}
+.cs-tab.active {
+  background: var(--panel-hover);
+  font-weight: 600;
+}
+.cs-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.cs-content {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 18px 22px;
+}
+.cs-head {
+  margin: 14px 0 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.cs-head:first-child {
+  margin-top: 0;
+}
+.cs-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 38px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+.cs-select {
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+}
+.cs-color {
+  width: 36px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+.cs-switch {
+  appearance: none;
+  position: relative;
+  width: 34px;
+  height: 20px;
+  margin: 0;
+  border-radius: 10px;
+  background: var(--panel-hover);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.cs-switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.cs-switch:checked {
+  background: var(--accent);
+}
+.cs-switch:checked::after {
+  transform: translateX(14px);
+  background: #fff;
+}
+.cs-switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.cs-bg {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.cs-palette-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.cs-palette {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+.cs-palette:hover {
+  border-color: var(--muted);
+  background: var(--panel-hover);
+  transform: translateY(-1px);
+}
+.cs-palette.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.cs-palette:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.cs-palette-swatches {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 3px;
+}
+.cs-palette-dot {
+  width: 18px;
+  height: 24px;
+  border-radius: 4px 4px 2px 2px;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 18%);
+}
+.cs-palette-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.cs-palette-name {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cs-palette-note {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cs-chip {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.cs-chip.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.cs-swatch {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.cs-swatch.on {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.cs-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 22px;
+  border-top: 1px solid var(--line);
+}
+.cs-reset {
+  background: transparent;
+}
+.cs-x {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+
+/* ---------------------------------------------------------------- command palette */
+.cp-backdrop {
+  align-items: flex-start;
+  padding-top: 12vh;
+}
+.cp {
+  display: flex;
+  flex-direction: column;
+  width: min(640px, calc(100vw - 32px));
+  max-height: 70vh;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--raised);
+  color: var(--text);
+  box-shadow: 0 24px 64px var(--shadow);
+  overflow: hidden;
+}
+.cp-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.cp-icon svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+}
+.cp-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 16px;
+  font-family: inherit;
+}
+.cp-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 6px;
+}
+.cp-group {
+  padding: 10px 10px 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.cp-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 0 10px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+.cp-row.sel {
+  background: var(--panel-hover);
+}
+.cp-row .sym-logo {
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+}
+.cp-glyph {
+  width: 22px;
+  color: var(--muted);
+  text-align: center;
+}
+.cp-muted {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cp-hint {
+  margin-left: auto;
+  color: var(--muted);
+  font: 11px 'Geist Mono', ui-monospace, monospace;
+}
+.cp-sec {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.cp-sec:hover {
+  color: var(--text);
+  border-color: var(--muted);
+}
+.cp-empty {
+  padding: 18px;
+  color: var(--muted);
+  text-align: center;
+}
+.cp-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 9px 16px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+.cp-foot kbd {
+  margin-right: 3px;
+}
+
+/* ---------------------------------------------------------------- dialogs follow the V4 surfaces */
+.modal,
+.ind-dialog {
+  background: var(--raised);
+  border-color: var(--border);
+  border-radius: 14px;
+}
+.btn {
+  border-radius: 8px;
+}
+
+@media (max-width: 760px) {
+  #tv-rail {
+    left: 12px;
+    top: 12px;
+  }
+  .cs-nav {
+    flex-basis: 120px;
+  }
+  .cs-palette-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 1440px) {
+  .mode-toggle button {
+    padding: 0 8px;
+  }
+  .symbol-input {
+    width: 82px;
+  }
+}
+@media (max-width: 1366px) {
+  .split-btn > .tv-btn:first-child > span + span {
+    display: none;
+  }
+}
+@media (max-width: 1366px) {
+  #tv-header {
+    gap: 3px;
+  }
+  /* Volume profile is also reachable from Power Tools and the ⌘K palette. */
+  .spot-controls > .tv-btn[title^='Visible-range'] {
+    display: none;
+  }
+}
+/* The details card gives way first, so at least ~4 watchlist rows stay visible. */
+.dock-details {
+  flex: 0 1 auto;
+  min-height: 120px;
+}
+.pane-head {
+  max-width: calc(100% - var(--chart-inset, 0px) - 96px);
+  overflow: hidden;
+}
+/* The fullscreen / theme buttons at the far right must never be pushed off-screen. */
+@media (max-width: 1520px) {
+  #tv-header {
+    gap: 3px;
+    padding: 0 8px;
+  }
+}
+html:fullscreen {
+  background: var(--app-bg);
+}
+
+/* ---------------------------------------------------------------- V4 design completion */
+/* Legend: a short line in each series' colour before its name. */
+.tl-swatch {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 2px;
+  border-radius: 1px;
+}
+/* Header symbol chip: coin logo + instrument tag. */
+.chip-logo {
+  display: inline-flex;
+  align-items: center;
+}
+.chip-logo svg {
+  width: 15px;
+  height: 15px;
+}
+.chip-logo .sym-logo {
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
+}
+.chip-tag {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--panel-hover);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+/* Footer latency. */
+.foot-latency {
+  margin-left: 6px;
+  color: var(--muted);
+  font: 12px 'Geist Mono', ui-monospace, monospace;
+}
+.foot-latency:empty {
+  display: none;
+}
+.foot-latency::before {
+  content: '· ';
+}
+.foot-latency.good {
+  color: var(--up);
+}
+.foot-latency.ok {
+  color: var(--warn);
+}
+.foot-latency.slow {
+  color: var(--down);
+}
+/* Chart settings: template menu, inline controls, notes. */
+.cs-tpl {
+  position: relative;
+}
+.cs-tpl-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 5;
+  flex-direction: column;
+  gap: 4px;
+  width: 260px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--raised);
+  box-shadow: 0 16px 40px var(--shadow);
+}
+.cs-tpl-save {
+  display: flex;
+  gap: 6px;
+}
+.cs-tpl-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.cs-tpl-apply {
+  flex: 1 1 auto;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+}
+.cs-tpl-apply:hover {
+  background: var(--panel-hover);
+}
+.cs-input {
+  height: 30px;
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-family: inherit;
+}
+.cs-num {
+  flex: 0 0 auto;
+  width: 80px;
+}
+.cs-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.cs-play {
+  height: 30px;
+  padding: 0 10px;
+}
+.cs-note {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.cs-nav {
+  overflow-y: auto;
+}
+/* Room for the symbol chip's logo + tag on mid-size screens. */
+@media (max-width: 1520px) {
+  .symbol-input {
+    width: 72px;
+  }
+  .spot-controls .tv-sep {
+    margin: 0 2px;
+  }
+}
+@media (max-width: 1366px) {
+  .chip-tag {
+    display: none !important;
+  }
+}
+@media (max-width: 1520px) {
+  .spot-controls {
+    gap: 1px;
+  }
+  .mode-toggle button {
+    padding: 0 7px;
+  }
+}
+
+/* ---------------------------------------------------------------- toolbar collapse / expand motion */
+#tv-rail .rail-tools {
+  transition:
+    max-height 0.28s cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 0.2s ease,
+    transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform-origin: top center;
+}
+/* Collapsed keeps the list in layout (height 0) so it can animate back open. */
+#tv-rail.collapsed .rail-tools {
+  display: flex;
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
+  overflow: hidden;
+  pointer-events: none;
+}
+#tv-rail {
+  transition:
+    padding 0.28s cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 0.28s ease;
+}
+#tv-rail .rail-collapse,
+#tv-rail .rail-collapse svg {
+  transition:
+    transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1),
+    width 0.28s cubic-bezier(0.2, 0.8, 0.2, 1),
+    height 0.28s cubic-bezier(0.2, 0.8, 0.2, 1),
+    margin 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+/* Chart title + legend glide to their new inset instead of jumping. */
+.pane-head,
+.tool-legend {
+  transition: left 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  #tv-rail,
+  #tv-rail .rail-tools,
+  #tv-rail .rail-collapse,
+  #tv-rail .rail-collapse svg,
+  .pane-head,
+  .tool-legend {
+    transition: none;
+  }
+}
+#tv-rail.rail-animating {
+  backdrop-filter: none;
+  background: var(--panel);
+}
+#tv-rail.rail-animating .rail-tools {
+  will-change: max-height, opacity, transform;
+}
+
+/* Toolbar sits tight in the chart's top-left corner; --chart-inset (set from
+   its measured edge in main.ts) keeps titles, legends and widgets clear of it. */
+#tv-rail {
+  left: 12px;
+  top: 12px;
+  max-height: calc(100% - 32px);
+}
+#tv-body:has(#tv-rail.collapsed) #grid {
+  --chart-inset: 0px;
+}
+#grid {
+  --chart-inset: 0px;
+}
+@media (max-width: 760px) {
+  #tv-rail {
+    left: 10px;
+    top: 10px;
+  }
+}

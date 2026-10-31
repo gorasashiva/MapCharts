@@ -1,0 +1,10 @@
+* { box-sizing: border-box; }
+body { font-family: Inter, Arial, sans-serif; margin: 0; background: #0f1720; color: #dbeafe; }
+header { padding: 12px 16px; display:flex; align-items:center; justify-content:space-between; }
+.controls { display:flex; gap:12px; align-items:center; }
+.controls label { font-size:13px; color:#cbd5e1; }
+.chart-wrap { padding: 8px; display:flex; justify-content:center; }
+canvas { background: #071127; width: 100%; height: 520px; border-radius:6px; box-shadow: 0 6px 30px rgba(0,0,0,0.6); }
+footer { padding: 8px 16px; font-size:13px; color:#94a3b8; }
+
+.controls input[type=range] { vertical-align:middle; }

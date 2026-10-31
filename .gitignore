@@ -1,0 +1,34 @@
+node_modules/
+dist/
+*.local
+.env*
+.DS_Store
+coverage/
+.vite/
+*.tsbuildinfo
+
+# Personal Pine Script strategy drafts, unrelated to the charting library
+blastcandle
+daddyhome
+indicator1
+indicator2
+customindicator.pine
+lionindicator
+
+# Assembled static bundle (landing page + charting app) — build with npm run build:site
+dist-site/
+dist-site.zip
+
+# Recorded trade tape (npm run recorder)
+tape-data/
+
+# Recorded GLD option chains for MAP V3 (npm run recorder:map)
+map-data/
+book-data/
+replay-out/
+
+# SSH keys and cloud credentials — never commit
+*.pem
+oci-ubuntu-free*
+id_rsa*
+id_ed25519*

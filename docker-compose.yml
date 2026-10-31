@@ -1,0 +1,22 @@
+services:
+  candl:
+    build: .
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+  # Records Delta's trade tape so Big Trades / Deep Trades have real history
+  # (Delta's API keeps only the last 50 trades). nginx proxies /tape/ to it.
+  recorder:
+    build:
+      context: .
+      dockerfile: recorder/Dockerfile
+    environment:
+      TAPE_SYMBOLS: XAUTUSD,BTCUSD,ETHUSD
+      TAPE_RETAIN_DAYS: "30"
+    volumes:
+      - tape-data:/data
+    restart: unless-stopped
+
+volumes:
+  tape-data:

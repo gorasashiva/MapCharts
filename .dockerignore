@@ -1,0 +1,16 @@
+node_modules
+.git
+.github
+dist
+examples/basic/dist
+*.md
+blastcandle
+daddyhome
+indicator1
+indicator2
+customindicator.pine
+lionindicator
+examples/trade-rain
+.vscode
+.idea
+tape-data
