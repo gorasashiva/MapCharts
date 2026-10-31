@@ -8,7 +8,8 @@ prices straight from Delta. Your Mac is only for writing code and `git push`.
 Full details: [deploy/aws-ec2/README.md](deploy/aws-ec2/README.md).
 
 Instance: **t4g.small**, **Ubuntu 24.04 arm64**, **30 GB gp3**, **ap-south-1
-(Mumbai)**. Security group: **SSH (22) from your IP only**, nothing else.
+(Mumbai)**. Security group: **SSH (22) from your IP**, plus port 8080 from
+the IPs you test from (below). Nothing open to everyone.
 
 ## First-time setup (all on the instance)
 
@@ -30,16 +31,32 @@ cd ~/candl-platform && sudo ./deploy/aws-ec2/setup.sh $USER
 on crash and reboot), builds the chart app and puts it live, then prints a
 status report: all three recorders should be `active`.
 
-## Open the chart privately
+## Open the chart (testing: your IPs only)
 
-From any computer with the key, keep this running, then browse to http://localhost:8080:
+The site answers on **http://&lt;instance-public-ip&gt;:8080** (`status.sh` prints
+the exact address), but only to the IPs you allow in the security group:
+
+1. On the device you want to use, open https://checkip.amazonaws.com in its
+   browser and note the IP it shows.
+2. AWS console → EC2 → the instance → Security → the security group → Edit
+   inbound rules → Add rule: **Custom TCP, port 8080, Source: Custom,
+   `<that-ip>/32`**, description e.g. "home wifi". Save.
+3. Open http://&lt;instance-public-ip&gt;:8080 on that device.
+
+Devices on the same Wi-Fi share one IP, so one rule covers them all. For
+another network (office, a friend's Wi-Fi) add its IP the same way. Never use
+`0.0.0.0/0` (anyone).
+
+**Phones on mobile data** change IP often. For those, turn on a password
+(on the instance), then allow the phone's current IP as above:
 
 ```sh
-ssh -i ~/.ssh/candl-ec2.pem -N -L 8080:127.0.0.1:8080 ubuntu@<instance-ip>
+sudo ~/candl-platform/deploy/aws-ec2/set-password.sh <username>   # --off removes it
 ```
 
-For a real URL with a private login (and public at launch), see
-[Cloudflare Tunnel + Access](deploy/aws-ec2/README.md#open-the-chart-privately).
+This is plain HTTP, for testing. For an HTTPS URL with an email login that
+works from anywhere (and turns public at launch), see
+[Cloudflare Tunnel + Access](deploy/aws-ec2/README.md#later-https-url-with-a-login).
 
 ## Updating
 

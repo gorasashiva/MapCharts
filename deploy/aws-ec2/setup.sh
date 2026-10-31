@@ -6,8 +6,8 @@
 # Installs Node 24 and Nginx; runs the tape, book and MAP recorders as
 # always-on services writing to /var/lib/candl (each compresses finished
 # periods itself); serves the chart bundle from /var/www/candl on
-# 127.0.0.1:8080 (Cloudflare Tunnel publishes it), built here from this
-# checkout so nothing has to come from another machine.
+# port 8080 (open it to your IPs in the security group), built here from
+# this checkout so nothing has to come from another machine.
 # Safe to re-run: it rewrites the configs and restarts the services.
 set -Eeuo pipefail
 
@@ -53,6 +53,7 @@ systemctl enable candl-tape candl-book candl-map
 systemctl restart candl-tape candl-book candl-map
 
 echo "== nginx"
+install -d -m 0755 /etc/nginx/candl-auth.d
 install -m 0644 "$script_dir/nginx-candl.conf" /etc/nginx/conf.d/candl.conf
 if [[ -L /etc/nginx/sites-enabled/default ]]; then rm /etc/nginx/sites-enabled/default; fi
 nginx -t

@@ -27,19 +27,28 @@ above with room to spare (~19 GB at steady state).
 | `setup.sh` | instance, `sudo`, once (safe to re-run) | Node 24, Nginx, the three recorder services, then `install-site.sh` and `status.sh` |
 | `install-site.sh` | instance | `npm ci` (only when `package-lock.json` changed), build, swap the new bundle into `/var/www/candl` |
 | `update.sh` | instance | `git pull`, `install-site.sh`, then restart recorders / re-run setup only if their code or config changed |
-| `status.sh` | instance | services, recorder status, disk, site check |
+| `status.sh` | instance | services, recorder status, disk, site check and its public address |
+| `set-password.sh` | instance, `sudo`, optional | username/password in front of the site (`--off` removes it) |
 | `seed-data.sh` + `merge-seed.*` | Mac, once, optional | upload older local recordings and merge them without double counting |
 | `build.sh` | either | the Vite build of `examples/basic` into `deploy/aws-ec2/dist` |
 
-## Open the chart privately
+## Open the chart: testing on the public IP
 
-**Right away, no setup:** an SSH tunnel, then open http://localhost:8080.
+Nginx listens on port 8080 of every interface; the **security group decides
+who gets through**. Add one inbound rule per network you test from: Custom
+TCP, port 8080, source `<ip>/32` (each device can look up its IP at
+https://checkip.amazonaws.com). Then open `http://<instance-public-ip>:8080`
+(`status.sh` prints it). Never open 8080 to `0.0.0.0/0`.
 
-```sh
-ssh -i ~/.ssh/candl-ec2.pem -N -L 8080:127.0.0.1:8080 ubuntu@<instance-ip>
-```
+Optional password for devices whose IP keeps changing:
+`sudo ./deploy/aws-ec2/set-password.sh <username>` (and `--off` to remove).
+It is plain HTTP, so treat it as a testing setup.
+
+## Later: HTTPS URL with a login
 
 **With your own domain (private now, public at launch):** Cloudflare Tunnel + Access.
+Point the tunnel at `localhost:8080` and remove the port 8080 rules from the
+security group, so the only way in is through Cloudflare.
 
 1. Add the domain to Cloudflare (or buy it there).
 2. Zero Trust → Networks → Tunnels → Create (cloudflared) → copy the install
@@ -49,7 +58,7 @@ ssh -i ~/.ssh/candl-ec2.pem -N -L 8080:127.0.0.1:8080 ubuntu@<instance-ip>
    *Allow*, Include → Emails → your email (add testers' emails any time).
 5. **At launch:** delete that Access application. Same URL, now public.
 
-No inbound port is opened for either; the security group allows only SSH from your IP.
+The tunnel needs no inbound port; once it is in use, the security group can go back to SSH only.
 
 ## Everyday
 
