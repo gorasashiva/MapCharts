@@ -1,0 +1,22 @@
+# Trade tape recorder (recorder/tapeRecorder.mjs): every Delta trade for the
+# chart's footprint, Big Trades and Deep Trades history. nginx proxies /tape/.
+# Installed by setup.sh, which fills in CANDL_USER and CANDL_REPO.
+[Unit]
+Description=Candl trade tape recorder
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=CANDL_USER
+WorkingDirectory=CANDL_REPO
+ExecStart=/usr/bin/env node recorder/tapeRecorder.mjs
+Environment=TAPE_DIR=/var/lib/candl/tape
+Environment=TAPE_PORT=8787
+Environment=TAPE_SYMBOLS=XAUTUSD,BTCUSD,ETHUSD
+# ~30 MB a day for 3 markets, ~7 MB once the day is gzipped
+Environment=TAPE_RETAIN_DAYS=180
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

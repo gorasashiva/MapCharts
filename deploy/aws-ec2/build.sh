@@ -16,6 +16,6 @@ fi
   --emptyOutDir
 
 if [[ ! -s "$script_dir/dist/index.html" ]]; then
-  echo "Build completed without producing deploy/oracle-cloud/dist/index.html." >&2
+  echo "Build completed without producing deploy/aws-ec2/dist/index.html." >&2
   exit 1
 fi

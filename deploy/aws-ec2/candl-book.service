@@ -1,0 +1,23 @@
+# Order book recorder (recorder/bookRecorder.mjs): L2 book + trades for the
+# DOM study and `npm run replay:dom`. Internal only — nothing proxies it.
+# Installed by setup.sh, which fills in CANDL_USER and CANDL_REPO.
+[Unit]
+Description=Candl order book recorder
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=CANDL_USER
+WorkingDirectory=CANDL_REPO
+ExecStart=/usr/bin/env node recorder/bookRecorder.mjs
+Environment=BOOK_DIR=/var/lib/candl/book
+Environment=BOOK_PORT=8789
+Environment=BOOK_SYMBOLS=XAUTUSD,BTCUSD,ETHUSD
+# ~200 MB a day for 3 markets, already gzipped hour by hour; 60 days ≈ 12 GB,
+# sized for a 30 GB disk with recordings copied to the Mac regularly
+Environment=BOOK_RETAIN_DAYS=60
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

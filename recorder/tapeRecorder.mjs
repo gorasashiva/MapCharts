@@ -14,7 +14,8 @@
 //      TAPE_PORT         default 8787
 //      TAPE_RETAIN_DAYS  default 30
 //
-// Storage: TAPE_DIR/<SYMBOL>/<YYYY-MM-DD UTC>.ndjson, one print per line as
+// Storage: TAPE_DIR/<SYMBOL>/<YYYY-MM-DD UTC>.ndjson (gzipped to .ndjson.gz
+// 15 minutes after the day ends), one print per line as
 // [timeUs, price, qtyBase, side] (side 1 = taker buy, -1 = taker sell), plus
 // TAPE_DIR/<SYMBOL>/sessions.json — the spans actually recorded, [[startMs,
 // endMs], ...], so a gap (recorder down) isn't mistaken for a quiet market.
@@ -30,8 +31,10 @@
 //       clipped to the range, prints: [[timeMs, price, qtyBase, side]...]}.
 //   GET /tape/status
 import { createServer } from 'node:http'
-import { appendFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { promisify } from 'node:util'
+import { gunzip, gzip } from 'node:zlib'
 import { buildClusters, perDayThreshold } from '../src/overlays/takerOrders.ts'
 
 const SYMBOLS = (process.env.TAPE_SYMBOLS ?? 'XAUTUSD,BTCUSD,ETHUSD')
@@ -49,6 +52,8 @@ const MAX_CLUSTERS = 20_000
 /** A reconnect within this long continues the previous recorded span (the subscribe snapshot backfills it). */
 const SESSION_JOIN_MS = 60_000
 const STALE_MS = 60_000
+/** A UTC day is gzipped this long after it ends, once its last prints have been flushed. */
+const COMPRESS_AFTER_MS = 15 * 60_000
 const MODES = new Set(['cumulative', 'order', 'separate'])
 
 const log = (...a) => console.log(new Date().toISOString(), '[tape]', ...a)
@@ -206,20 +211,61 @@ async function prune() {
     } catch {
       continue
     }
-    for (const f of files) if (/^\d{4}-\d{2}-\d{2}\.ndjson$/.test(f) && f.slice(0, 10) < cutoff) await rm(path.join(symDir(sym), f), { force: true })
+    for (const f of files) if (DAY_FILE.test(f) && f.slice(0, 10) < cutoff) await rm(path.join(symDir(sym), f), { force: true })
     st.sessions = st.sessions.filter((s) => s[1] >= keepFrom)
+  }
+}
+
+// ----- end-of-day compression --------------------------------------------------
+// A finished day becomes <day>.ndjson.gz (~8x smaller). The day's file is first
+// renamed to .compressing, so a print that still arrives for it starts a fresh
+// .ndjson instead of being lost; that one is folded into the .gz next round.
+// readDay reads all three forms, so serving never sees a half-done day.
+const DAY_FILE = /^\d{4}-\d{2}-\d{2}\.ndjson(\.gz|\.compressing)?$/
+const gzipAsync = promisify(gzip)
+const gunzipAsync = promisify(gunzip)
+const exists = (p) => stat(p).then(() => true, () => false)
+
+async function compressClosedDays() {
+  const openDay = dayKey(Date.now() - COMPRESS_AFTER_MS)
+  for (const sym of SYMBOLS) {
+    let files = []
+    try {
+      files = await readdir(symDir(sym))
+    } catch {
+      continue
+    }
+    const days = new Set(files.filter((f) => /^\d{4}-\d{2}-\d{2}\.ndjson(\.compressing)?$/.test(f)).map((f) => f.slice(0, 10)))
+    for (const key of [...days].sort()) {
+      if (key >= openDay) continue
+      const base = path.join(symDir(sym), `${key}.ndjson`)
+      const work = `${base}.compressing`
+      // a .compressing left by a crash is finished first; a newer .ndjson waits for the next round
+      if (!(await exists(work))) await rename(base, work)
+      const prev = (await exists(`${base}.gz`)) ? await gunzipAsync(await readFile(`${base}.gz`)) : Buffer.alloc(0)
+      await writeFile(`${base}.gz.tmp`, await gzipAsync(Buffer.concat([prev, await readFile(work)])))
+      await rename(`${base}.gz.tmp`, `${base}.gz`)
+      await rm(work, { force: true })
+      log(`compressed ${sym} ${key}`)
+    }
   }
 }
 
 // ----- serving ----------------------------------------------------------------
 /** Parsed prints of one day file, filtered to [fromUs, toUs]. */
 async function readDay(sym, key, fromUs, toUs) {
-  let text
+  // oldest part first: the gzipped day, one being compressed, prints that arrived after
+  const base = path.join(symDir(sym), `${key}.ndjson`)
+  let text = ''
   try {
-    text = await readFile(path.join(symDir(sym), `${key}.ndjson`), 'utf8')
-  } catch {
-    return []
+    text += (await gunzipAsync(await readFile(`${base}.gz`))).toString('utf8')
+  } catch {}
+  for (const f of [`${base}.compressing`, base]) {
+    try {
+      text += await readFile(f, 'utf8')
+    } catch {}
   }
+  if (!text) return []
   const out = []
   for (const line of text.split('\n')) {
     if (!line) continue
@@ -378,6 +424,8 @@ async function main() {
   setInterval(() => void Promise.all(SYMBOLS.map(saveSessions)).catch(() => {}), 10_000)
   setInterval(() => void prune().catch(() => {}), 3600_000)
   void prune().catch(() => {})
+  setInterval(() => void compressClosedDays().catch((err) => log('compress failed:', err.message)), 3600_000)
+  void compressClosedDays().catch((err) => log('compress failed:', err.message))
   setInterval(() => log(SYMBOLS.map((s) => `${s} ${state.get(s).count}`).join(' · '), 'prints this run'), 300_000)
 
   const shutdown = async () => {

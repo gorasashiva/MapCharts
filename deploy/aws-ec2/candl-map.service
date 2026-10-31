@@ -1,0 +1,20 @@
+# MAP V3 recorder (recorder/mapRecorder.mjs): GLD option chain at 08:15 and
+# 16:20 New York time. nginx proxies /maplevels/.
+# Installed by setup.sh, which fills in CANDL_USER and CANDL_REPO.
+[Unit]
+Description=Candl MAP V3 recorder (GLD option chain snapshots)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=CANDL_USER
+WorkingDirectory=CANDL_REPO
+ExecStart=/usr/bin/env node recorder/mapRecorder.mjs
+Environment=MAP_DIR=/var/lib/candl/map
+Environment=MAP_PORT=8788
+Environment=MAP_RETAIN_DAYS=400
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
