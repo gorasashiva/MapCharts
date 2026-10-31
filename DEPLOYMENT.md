@@ -1,15 +1,16 @@
 # Deployment
 
-The platform runs on one always-on AWS EC2 instance: three recorders (trade
-tape, order book, GLD option chain) plus Nginx serving the chart app privately.
-Scripts and full details: [deploy/aws-ec2/README.md](deploy/aws-ec2/README.md).
+The platform runs on one always-on AWS EC2 instance and needs nothing else
+running: three recorders (trade tape, order book, GLD option chain) write to
+its disk, and Nginx serves the chart app, which the instance builds itself from
+this repository. The browser gets recorded history from the instance and live
+prices straight from Delta. Your Mac is only for writing code and `git push`.
+Full details: [deploy/aws-ec2/README.md](deploy/aws-ec2/README.md).
 
 Instance: **t4g.small**, **Ubuntu 24.04 arm64**, **30 GB gp3**, **ap-south-1
 (Mumbai)**. Security group: **SSH (22) from your IP only**, nothing else.
 
-## First-time setup
-
-**1. On the instance:** clone and install.
+## First-time setup (all on the instance)
 
 ```sh
 ssh -i ~/.ssh/candl-ec2.pem ubuntu@<instance-ip>
@@ -25,46 +26,57 @@ git clone git@github.com:gorasashiva/MapCharts.git ~/candl-platform
 cd ~/candl-platform && sudo ./deploy/aws-ec2/setup.sh $USER
 ```
 
-The setup ends with a status report; all three recorders should be `active`.
+`setup.sh` installs Node 24 and Nginx, starts the three recorders (restarting
+on crash and reboot), builds the chart app and puts it live, then prints a
+status report: all three recorders should be `active`.
 
-**2. On the Mac:** publish the chart app and upload earlier local recordings.
+## Open the chart privately
 
-```sh
-export CANDL_SSH_KEY=~/.ssh/candl-ec2.pem EC2=ubuntu@<instance-ip>
-npm ci
-./deploy/aws-ec2/publish.sh $EC2
-./deploy/aws-ec2/seed-data.sh $EC2 <folder holding tape-data/ book-data/ map-data/>
-```
-
-**3. Open it privately:** keep this running, then browse to http://localhost:8080.
+From any computer with the key, keep this running, then browse to http://localhost:8080:
 
 ```sh
-ssh -i $CANDL_SSH_KEY -N -L 8080:127.0.0.1:8080 $EC2
+ssh -i ~/.ssh/candl-ec2.pem -N -L 8080:127.0.0.1:8080 ubuntu@<instance-ip>
 ```
 
-Once the instance is recording, stop any recorders running on the Mac.
+For a real URL with a private login (and public at launch), see
+[Cloudflare Tunnel + Access](deploy/aws-ec2/README.md#open-the-chart-privately).
 
 ## Updating
 
-| What changed | Do this |
-|---|---|
-| Recorder code | push to GitHub, then on the instance: `cd ~/candl-platform && git pull && sudo systemctl restart candl-tape candl-book candl-map` |
-| Chart app | from the Mac: `./deploy/aws-ec2/publish.sh $EC2` |
-| Health check | `ssh -i $CANDL_SSH_KEY $EC2 '~/candl-platform/deploy/aws-ec2/status.sh'` |
-
-## Keeping the data
-
-The instance keeps a rolling window (order book 60 days, trade tape 180 days)
-and deletes older days by itself. Copy recordings to the Mac at least every
-few weeks; **never add `--delete`**, the Mac copy is the full history.
+Push to GitHub, then on the instance:
 
 ```sh
-rsync -az -e "ssh -i $CANDL_SSH_KEY" $EC2:/var/lib/candl/book/ ./book-data/
-rsync -az -e "ssh -i $CANDL_SSH_KEY" $EC2:/var/lib/candl/tape/ ./tape-data/
-rsync -az -e "ssh -i $CANDL_SSH_KEY" $EC2:/var/lib/candl/map/  ./map-data/
+~/candl-platform/deploy/aws-ec2/update.sh
 ```
 
-## Going public
+It pulls, rebuilds and republishes the app, restarts the recorders only if
+their code changed, and re-runs setup if a service or Nginx config changed.
+Health check any time: `~/candl-platform/deploy/aws-ec2/status.sh`.
 
-Put Cloudflare Tunnel + Access in front (private login now, removed at launch;
-same URL). Steps in [deploy/aws-ec2/README.md](deploy/aws-ec2/README.md#5-open-the-chart-privately).
+## Analysing the data
+
+Replay the recorded order book on the instance itself, no download needed:
+
+```sh
+cd ~/candl-platform
+npm run replay:dom -- --symbol XAUTUSD --from 2026-11-01 --to 2026-11-07 --dir /var/lib/candl/book
+```
+
+The instance keeps a rolling window (order book 60 days, trade tape 180 days)
+and deletes older days by itself. To keep the full history, copy it off at
+least every few weeks; **never add `--delete`**:
+
+```sh
+rsync -az -e "ssh -i ~/.ssh/candl-ec2.pem" ubuntu@<instance-ip>:/var/lib/candl/ ./candl-data/
+```
+
+## One-time: bring over older Mac recordings (optional)
+
+If the Mac recorded before the instance existed, upload that once:
+
+```sh
+CANDL_SSH_KEY=~/.ssh/candl-ec2.pem ./deploy/aws-ec2/seed-data.sh ubuntu@<instance-ip> <folder holding tape-data/ book-data/ map-data/>
+```
+
+Only data from before the instance's own first recording is taken, so nothing
+is counted twice. Afterwards the Mac recorders can stay off.

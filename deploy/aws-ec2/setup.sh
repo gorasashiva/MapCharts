@@ -6,7 +6,8 @@
 # Installs Node 24 and Nginx; runs the tape, book and MAP recorders as
 # always-on services writing to /var/lib/candl (each compresses finished
 # periods itself); serves the chart bundle from /var/www/candl on
-# 127.0.0.1:8080 (Cloudflare Tunnel publishes it).
+# 127.0.0.1:8080 (Cloudflare Tunnel publishes it), built here from this
+# checkout so nothing has to come from another machine.
 # Safe to re-run: it rewrites the configs and restarts the services.
 set -Eeuo pipefail
 
@@ -58,7 +59,10 @@ nginx -t
 systemctl enable --now nginx
 systemctl reload nginx
 
+echo "== chart app"
+sudo -u "$deploy_user" -H "$script_dir/install-site.sh"
+
 sleep 3
 "$script_dir/status.sh" || true
 echo
-echo "Done. Next: publish the chart bundle (publish.sh from your Mac) and set up Cloudflare Tunnel (README.md)."
+echo "Done. Later updates: ~/candl-platform/deploy/aws-ec2/update.sh (pull, rebuild, restart)."
