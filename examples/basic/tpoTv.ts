@@ -17,7 +17,7 @@
 
 import type { Candle, IndicatorDef, IndicatorParam } from '../../src/index'
 import type { Converters } from '../../src/drawings/types'
-import { sessionOpenHourUTC } from '../../src/core/session'
+import { sessionOpenNyHour } from '../../src/core/session'
 import { autoRowSize, computeTpo, dayType, firstTouchAfter, inferTick, tpoLetter, type TpoPeriod, type TpoProfile } from '../../src/overlays/tpoTvModel'
 import { COL, PALETTE, colorOpts } from './flyingCpr'
 import { askNotificationPermissionOnce, fireSignalAlert } from './signalAlert'
@@ -211,7 +211,9 @@ export function computeTpoTvModel(candles: Candle[], p: Record<string, number>, 
     rowSize,
     valueAreaPct: Math.min(100, Math.max(1, n('vaPct', 70))),
     ibBlocks: Math.max(1, Math.round(n('ibBlocks', 2))),
-    dayStartHourUTC: hour >= 0 ? Math.round(hour) : sessionOpenHourUTC(ctx.symbol),
+    // market default: gold opens at 18:00 New York, following US daylight saving; others at 00:00 UTC
+    dayStartHourUTC: hour >= 0 ? Math.round(hour) : 0,
+    dayStartNyHour: hour >= 0 ? null : sessionOpenNyHour(ctx.symbol),
   })
   // TradingView raises an error when the rows are too fine; here: a note, and those profiles are skipped
   const tooFine = profiles.some((pr) => pr.hi - pr.lo > MAX_ROWS)

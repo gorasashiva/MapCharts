@@ -70,6 +70,23 @@ describe('tpoTvModel', () => {
     expect(periodStart(Date.UTC(2026, 10, 20), 'month', 0)).toBe(Date.UTC(2026, 10, 1))
   })
 
+  it('gold days open at 18:00 New York, so the UTC start moves with US daylight saving', () => {
+    // Fri 30 Oct (summer time, UTC−4): 18:00 NY = 22:00 UTC; Tue 3 Nov (winter, UTC−5): 23:00 UTC
+    expect(periodStart(Date.UTC(2026, 9, 30, 12), 'day', 0, 18)).toBe(Date.UTC(2026, 9, 29, 22))
+    expect(periodStart(Date.UTC(2026, 10, 3, 12), 'day', 0, 18)).toBe(Date.UTC(2026, 10, 2, 23))
+    // 22:30 UTC on 2 Nov is still the 2 Nov session (it opens at 23:00 UTC in winter)
+    expect(periodStart(Date.UTC(2026, 10, 2, 22, 30), 'day', 0, 18)).toBe(Date.UTC(2026, 10, 1, 23))
+    // the week of 2 Nov opens Sunday 1 Nov 18:00 NY = 23:00 UTC (the clocks changed that morning)
+    expect(periodStart(Date.UTC(2026, 10, 4, 12), 'week', 0, 18)).toBe(Date.UTC(2026, 10, 1, 23))
+    // a profile across the change: the Monday 2 Nov session runs Sun 23:00 → Mon 23:00 UTC
+    const bars = [Date.UTC(2026, 10, 1, 23, 0), Date.UTC(2026, 10, 2, 22, 55), Date.UTC(2026, 10, 2, 23, 0)].map((t) => ({ time: t, open: 1, high: 2, low: 1, close: 2, volume: 1 }))
+    const ps = computeTpo(bars, { ...opts, dayStartNyHour: 18 }, Date.UTC(2026, 10, 4))
+    expect(ps.map((p) => [p.start, p.end, p.blocks.length])).toEqual([
+      [Date.UTC(2026, 10, 1, 23), Date.UTC(2026, 10, 2, 23), 2],
+      [Date.UTC(2026, 10, 2, 23), Date.UTC(2026, 10, 3, 23), 1],
+    ])
+  })
+
   it('day types from the initial balance', () => {
     const trend = computeTpo([bar(0, 100, 101), bar(30, 100, 101), bar(60, 101, 104), bar(90, 104, 108)], opts, D0)[0]
     expect(dayType(trend)).toBe('Trend')

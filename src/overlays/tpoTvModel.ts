@@ -23,6 +23,7 @@
  *
  * Pure — no DOM. Bars must be oldest first.
  */
+import { nyOffsetMinutes, nyTime } from './nyClock'
 
 export interface TpoBar {
   time: number
@@ -45,6 +46,8 @@ export interface TpoOptions {
   ibBlocks: number
   /** Hour (UTC) a day starts — the market's session open. */
   dayStartHourUTC: number
+  /** When set, a day starts at this New York hour instead (follows US daylight saving; gold: 18). */
+  dayStartNyHour?: number | null
 }
 
 export const TPO_DEFAULTS: Omit<TpoOptions, 'rowSize'> = {
@@ -106,7 +109,8 @@ export const tpoLetter = (index: number): string => LETTERS[index % 52]
  * opens in the evening (gold: 22:00 UTC) is the next calendar date's session.
  * Weeks start on that Monday's session, months on the 1st's.
  */
-export function periodStart(t: number, period: TpoPeriod, dayStartHourUTC: number): number {
+export function periodStart(t: number, period: TpoPeriod, dayStartHourUTC: number, dayStartNyHour: number | null = null): number {
+  if (dayStartNyHour !== null) return nyPeriodStart(t, period, dayStartNyHour)
   const off = dayStartHourUTC * 3_600_000
   const dayStart = Math.floor((t - off) / DAY) * DAY + off
   if (period === 'day') return dayStart
@@ -120,7 +124,26 @@ export function periodStart(t: number, period: TpoPeriod, dayStartHourUTC: numbe
   return sessionOf(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1))
 }
 
-function periodEnd(start: number, period: TpoPeriod, dayStartHourUTC: number): number {
+/**
+ * Period start when the day opens at a New York hour: the session that opens at
+ * that hour on date D is the next date's (gold's 18:00 opens tomorrow's session),
+ * so the clock change only moves the UTC time, never which session a bar is in.
+ */
+function nyPeriodStart(t: number, period: TpoPeriod, nyHour: number): number {
+  const ny = new Date(t + nyOffsetMinutes(t) * 60_000) // New York wall clock, read as UTC
+  let session = Date.UTC(ny.getUTCFullYear(), ny.getUTCMonth(), ny.getUTCDate())
+  if (ny.getUTCHours() >= nyHour) session += DAY
+  if (period === 'week') session -= ((new Date(session).getUTCDay() + 6) % 7) * DAY // its Monday
+  else if (period === 'month') session = Date.UTC(new Date(session).getUTCFullYear(), new Date(session).getUTCMonth(), 1)
+  return nyTime(new Date(session - DAY).toISOString().slice(0, 10), nyHour) // opens the evening before
+}
+
+function periodEnd(start: number, period: TpoPeriod, dayStartHourUTC: number, dayStartNyHour: number | null = null): number {
+  if (dayStartNyHour !== null) {
+    // the next period's open: a step well inside it, then back to its start (days are 23–25 h around a clock change)
+    const step = period === 'day' ? DAY + 6 * 3_600_000 : period === 'week' ? 7 * DAY + 6 * 3_600_000 : 32 * DAY
+    return nyPeriodStart(start + step, period, dayStartNyHour)
+  }
   if (period === 'day') return start + DAY
   if (period === 'week') return start + 7 * DAY
   return periodStart(start + 32 * DAY, 'month', dayStartHourUTC)
@@ -175,10 +198,10 @@ export function computeTpo(bars: TpoBar[], o: TpoOptions, now = Date.now()): Tpo
   const out: TpoProfile[] = []
   let cur: { start: number; end: number; bars: TpoBar[] } | null = null
   for (const b of bars) {
-    const ps = periodStart(b.time, o.period, o.dayStartHourUTC)
+    const ps = periodStart(b.time, o.period, o.dayStartHourUTC, o.dayStartNyHour ?? null)
     if (!cur || ps !== cur.start) {
       if (cur && cur.bars.length) out.push(build(cur.start, cur.end, cur.bars, o, true))
-      cur = { start: ps, end: periodEnd(ps, o.period, o.dayStartHourUTC), bars: [] }
+      cur = { start: ps, end: periodEnd(ps, o.period, o.dayStartHourUTC, o.dayStartNyHour ?? null), bars: [] }
     }
     cur.bars.push(b)
   }

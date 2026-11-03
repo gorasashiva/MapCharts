@@ -5,13 +5,17 @@
  * at a hard-coded UTC midnight.
  *
  * Default: 00:00 UTC (05:30 IST), Delta's daily-candle boundary. Gold follows
- * the metals market open at 22:00 UTC (03:30 IST), so its session that opens
- * Sunday 22:00 UTC is Monday's, and its thin weekend trading is ignored. That
- * covers both gold tokens: Delta's XAUTUSD and Binance's PAXGUSDT.
+ * the metals market open at 18:00 New York time — 22:00 UTC (03:30 IST) under
+ * US daylight saving, 23:00 UTC (04:30 IST) in winter — so its session that
+ * opens Sunday evening is Monday's, and its thin weekend trading is ignored.
+ * That covers both gold tokens: Delta's XAUTUSD and Binance's PAXGUSDT.
  */
-const SESSION_OPEN_HOUR_UTC: Record<string, number> = {
-  XAUTUSD: 22,
-  PAXGUSDT: 22,
+import { nyOffsetMinutes } from '../overlays/nyClock'
+
+/** Symbols whose day opens at a New York wall-clock hour (so it follows US daylight saving). */
+const SESSION_OPEN_NY_HOUR: Record<string, number> = {
+  XAUTUSD: 18,
+  PAXGUSDT: 18,
 }
 
 export const SESSION_DAY_MS = 86_400_000
@@ -24,9 +28,20 @@ export function sessionClosedWeekends(symbol: string): boolean {
   return CLOSED_WEEKENDS.has(symbol.toUpperCase())
 }
 
-/** UTC hour the symbol's trading day opens (0 unless listed above). */
-export function sessionOpenHourUTC(symbol: string): number {
-  return SESSION_OPEN_HOUR_UTC[symbol.toUpperCase()] ?? 0
+/** New York hour the symbol's day opens at, or null when it opens at a fixed UTC hour. */
+export function sessionOpenNyHour(symbol: string): number | null {
+  return SESSION_OPEN_NY_HOUR[symbol.toUpperCase()] ?? null
+}
+
+/**
+ * UTC hour the symbol's trading day opens (0 unless listed above). For a New
+ * York-anchored open it is the hour in force at `at` (default: now) — gold:
+ * 22 under US daylight saving, 23 otherwise.
+ */
+export function sessionOpenHourUTC(symbol: string, at = Date.now()): number {
+  const ny = sessionOpenNyHour(symbol)
+  if (ny === null) return 0
+  return (((ny - nyOffsetMinutes(at) / 60) % 24) + 24) % 24
 }
 
 /** Index of the session containing `time` — equal for every bar of one session. */
