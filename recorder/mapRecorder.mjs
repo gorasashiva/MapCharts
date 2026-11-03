@@ -27,11 +27,15 @@
 // HTTP (CORS open, read-only):
 //   GET /maplevels/index?u=GLD           [{id, kind, nyDate, time, late}] oldest first
 //   GET /maplevels/snapshot?u=GLD&id=…   one snapshot (immutable)
+//   GET /maplevels/refs?u=GLD            {id: {XAUTUSD, PAXGUSD}}: Delta's close at the previous
+//                                        16:00 ET per morning snapshot — the chart side of the
+//                                        GLD ratio, fixed per session (backfilled from Delta's
+//                                        candle history, so older snapshots get one too)
 //   GET /maplevels/status
 import { createServer } from 'node:http'
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { dueJobs, nyParts, optionExpiryMs, sessionDate } from '../src/overlays/nyClock.ts'
+import { dueJobs, nyParts, nyTime, optionExpiryMs, prevNyWeekday, sessionDate } from '../src/overlays/nyClock.ts'
 
 const UNDERLYINGS = (process.env.MAP_UNDERLYINGS ?? 'GLD')
   .split(',')
@@ -59,6 +63,58 @@ const retryAt = new Map()
 const lastError = new Map()
 
 const uDir = (u) => path.join(DIR, u)
+
+// ----- ratio references ---------------------------------------------------------
+// The chart scales GLD strikes by (gold close at the previous 16:00 ET) ÷ (GLD close then).
+// Reading that gold close off the chart's own candles made it depend on how much history
+// the chart had loaded, so it is recorded here once per session instead.
+/** @type {Map<string, Record<string, Record<string, number>>>} u -> id -> symbol -> close */
+const refs = new Map()
+const refsFile = (u) => path.join(uDir(u), 'refs.json')
+
+async function loadRefs(u) {
+  try {
+    refs.set(u, JSON.parse(await readFile(refsFile(u), 'utf8')))
+  } catch {
+    refs.set(u, {})
+  }
+}
+
+/** Delta's close of the 5m bar that opens at 16:00 ET on the weekday before `nyDate` (as the chart's closeAt reads it). */
+async function refCloses(nyDate) {
+  const t = nyTime(prevNyWeekday(nyDate), 16, 0)
+  const out = {}
+  for (const sym of DELTA_GOLD) {
+    const rows = (await getJSON(`${DELTA}/v2/history/candles?resolution=5m&symbol=${sym}&start=${Math.floor((t - 3_600_000) / 1000)}&end=${Math.floor((t + 600_000) / 1000)}`)).result ?? []
+    let best = null
+    for (const r of rows) if (r.time * 1000 <= t && (!best || r.time > best.time)) best = r
+    if (best && t - best.time * 1000 <= 6 * 3_600_000 && Number(best.close) > 0) out[sym] = Number(best.close)
+  }
+  return out
+}
+
+/** Fill in missing references, a few per tick (Delta keeps the candles, so late is fine). */
+async function backfillRefs(u) {
+  const have = refs.get(u) ?? {}
+  const missing = (index.get(u) ?? []).filter((e) => e.kind === 'morning' && !have[e.id]).slice(-5)
+  let changed = false
+  for (const e of missing) {
+    try {
+      const r = await refCloses(e.nyDate)
+      if (Object.keys(r).length) {
+        have[e.id] = r
+        changed = true
+      }
+    } catch (err) {
+      log(`${u} ref for ${e.id} failed:`, String(err?.message ?? err))
+      break
+    }
+  }
+  if (changed) {
+    refs.set(u, have)
+    await writeFile(refsFile(u), JSON.stringify(have))
+  }
+}
 
 async function loadIndex(u) {
   await mkdir(uDir(u), { recursive: true })
@@ -158,6 +214,7 @@ async function tick() {
         break
       }
     }
+    await backfillRefs(u)
   }
 }
 
@@ -179,6 +236,7 @@ async function handle(url) {
     return [200, JSON.stringify({ underlyings: UNDERLYINGS.map((x) => ({ u: x, snapshots: index.get(x)?.length ?? 0, last: index.get(x)?.at(-1) ?? null, error: lastError.get(x) ?? null })), ny: nyParts(Date.now()) }), 'no-store']
   }
   if (!UNDERLYINGS.includes(u)) return [404, JSON.stringify({ error: `not recorded: ${u}` }), 'no-store']
+  if (url.pathname === '/maplevels/refs') return [200, JSON.stringify({ u, refs: refs.get(u) ?? {} }), 'no-store']
   if (url.pathname === '/maplevels/index') return [200, JSON.stringify({ u, snapshots: index.get(u), error: lastError.get(u) ?? null }), 'no-store']
   if (url.pathname === '/maplevels/snapshot') {
     const id = url.searchParams.get('id') ?? ''
@@ -193,7 +251,10 @@ async function handle(url) {
 }
 
 async function main() {
-  for (const u of UNDERLYINGS) await loadIndex(u)
+  for (const u of UNDERLYINGS) {
+    await loadIndex(u)
+    await loadRefs(u)
+  }
   createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost')
     let status = 405

@@ -31,19 +31,23 @@ for unit in candl-tape candl-book candl-map; do
     | cmp -s - "/etc/systemd/system/$unit.service" || needs_setup=true
 done
 
-# recorders run recorder/*.mjs and the two src files they import
+# each recorder runs its recorder/*.mjs and the src file it imports; restart only the ones
+# whose code changed, so the others keep recording without a gap
 deployed="$(cat "$deployed_file" 2>/dev/null || true)"
-recorders_changed=true
-if [[ -n "$deployed" ]] && git cat-file -e "$deployed" 2>/dev/null; then
-  git diff --quiet "$deployed" HEAD -- recorder src/overlays/takerOrders.ts src/overlays/bookTape.ts && recorders_changed=false
-fi
+known=false
+if [[ -n "$deployed" ]] && git cat-file -e "$deployed" 2>/dev/null; then known=true; fi
+changed_units=()
+changed() { ! $known || ! git diff --quiet "$deployed" HEAD -- "$@"; }
+changed recorder/tapeRecorder.mjs src/overlays/takerOrders.ts && changed_units+=(candl-tape)
+changed recorder/bookRecorder.mjs src/overlays/bookTape.ts && changed_units+=(candl-book)
+changed recorder/mapRecorder.mjs src/overlays/nyClock.ts && changed_units+=(candl-map)
 
 if $needs_setup; then
   echo "== services or nginx config differ from the repo: re-running setup"
   sudo "$script_dir/setup.sh" "$USER"
-elif $recorders_changed; then
-  echo "== recorder code changed: restarting recorders"
-  sudo systemctl restart candl-tape candl-book candl-map
+elif ((${#changed_units[@]})); then
+  echo "== recorder code changed: restarting ${changed_units[*]} (the others keep running)"
+  sudo systemctl restart "${changed_units[@]}"
   "$script_dir/status.sh"
 else
   echo "Recorders and config unchanged; left running."

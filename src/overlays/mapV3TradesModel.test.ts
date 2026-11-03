@@ -85,3 +85,35 @@ describe('mapV3TradesModel', () => {
     ])
   })
 })
+
+describe('mapV3TradesModel — trades do not move with the loaded window', () => {
+  it('dropping an older session leaves the newer sessions’ trades exactly as they were', () => {
+    // many markets, so some have a trade still open across a session change
+    for (let s0 = 1; s0 <= 40; s0++) {
+      let seed = s0
+      const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
+      const bars: MapTradeBar[] = []
+      let px = 103
+      for (let i = 0; i < 900; i++) {
+        const o = px
+        px += (rnd() - 0.5) * 1.6
+        const h = Math.max(o, px) + rnd() * 0.8, l = Math.min(o, px) - rnd() * 0.8
+        bars.push({ time: MON + i * MIN5, open: o, high: h, low: l, close: px })
+      }
+      // three sessions of 300 bars (after a warm-up), each with its own levels around price
+      const sessions = [0, 1, 2].map((k) => ({ start: 30 + k * 300, levels: { id: `s${k}`, flip: 95, levels: [96, 99, 102, 105, 108, 111].map((p, j) => ({ price: p + k, name: j % 2 ? 'Put Wall' : '0DTE Call' })) } }))
+      const run = (from: number) => {
+        const bs = bars.slice(from)
+        return computeMapTrades(bs, (i) => {
+          const g = i + from
+          const s = [...sessions].reverse().find((x) => g >= x.start)
+          return s && s.start >= from + 15 ? s.levels : null // only sessions loaded with warm-up, as theMapV3 does
+        }, { skipWeekends: false, maxBars: 400 }).map((t) => `${t.sessionId}|${t.index + from}|${t.side}|${t.entry}|${t.stop}|${t.r}`)
+      }
+      // session s0 scrolls out of the window
+      const full = run(0)
+      expect(full.some((k) => k.startsWith('s0|'))).toBe(true)
+      expect(run(310), `seed ${s0}`).toEqual(full.filter((k) => !k.startsWith('s0|')))
+    }
+  })
+})

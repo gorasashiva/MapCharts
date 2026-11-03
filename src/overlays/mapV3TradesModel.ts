@@ -153,8 +153,10 @@ export function computeMapTrades(
     const ses = levelsAt(i)
     if (!ses) continue
     if (ses.id !== sessionId) {
+      // each session is read on its own, so dropping an older one never changes a newer one
       sessionId = ses.id
       breaks = []
+      busyUntil = -1
     }
     const atr = atrAt(i)
     const tol = o.tolAtr * atr, buf = o.stopAtr * atr

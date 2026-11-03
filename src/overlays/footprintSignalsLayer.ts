@@ -72,6 +72,41 @@ const GOLD = '#ffd54f'
 const PURPLE = '#b388ff'
 const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
 
+/** Signals are read in blocks of this many bars (see compute). */
+const BLOCK_BARS = 120
+/** Row size ≈ price × ROW_K / autoRows on 5m (gold ~3900 → 0.2, BTC ~77k → 5), growing with √timeframe. */
+const ROW_K = 7.2e-4
+
+/** A block's row size, from its first open: fixed for the block whatever else is loaded. */
+function blockRowSize(price: number, barMs: number, autoRows: number): number {
+  return niceStep(((price * ROW_K) / Math.max(1, autoRows)) * Math.sqrt(barMs / 300_000))
+}
+
+function buildBar(k: Candle, prints: Print[], rs: number): FpBar {
+  const rows = new Map<number, [number, number]>()
+  for (const p of prints) {
+    const r = Math.floor(p.price / rs)
+    const e = rows.get(r)
+    if (e) p.buy ? (e[0] += p.qty) : (e[1] += p.qty)
+    else rows.set(r, p.buy ? [p.qty, 0] : [0, p.qty])
+  }
+  return { time: k.time, open: k.open, high: k.high, low: k.low, close: k.close, rows }
+}
+
+function barFlow(b: FpBar, rs: number): FpBarFlow {
+  let delta = 0, vol = 0, sell = 0, buy = 0, sellLow = 0, buyHigh = 0
+  const lowRow = Math.floor(b.low / rs), highRow = Math.floor(b.high / rs)
+  for (const [r, [bu, se]] of b.rows) {
+    delta += bu - se
+    vol += bu + se
+    sell += se
+    buy += bu
+    if (r < lowRow + 2) sellLow += se
+    if (r > highRow - 2) buyHigh += bu
+  }
+  return { delta, vol, sellLowShare: sell ? sellLow / sell : 0, buyHighShare: buy ? buyHigh / buy : 0 }
+}
+
 function niceStep(x: number): number {
   if (!(x > 0)) return 1
   const p = Math.pow(10, Math.floor(Math.log10(x)))
@@ -113,16 +148,16 @@ export class FootprintSignalsLayer {
    * Recompute when a bar closed or the trade sources changed; check the forming
    * bar against open trades on every call. Returns what is new since the last call.
    */
-  update(c: Candle[], barMs: number, autoRows: number, exact: [number, number][], sources: Print[][], now: number, gex?: FpGexInput): FpSignalEvent[] {
+  update(c: Candle[], barMs: number, autoRows: number, exact: [number, number][], sources: Print[][], now: number, gex?: FpGexInput, historyFrom = -Infinity): FpSignalEvent[] {
     const events: FpSignalEvent[] = []
     this.gexMode = gex && gex.levels.length ? gex.mode : gex ? this.gexMode : null
     if (c.length < 3) return events
     const closedN = c[c.length - 1].time + barMs <= now ? c.length : c.length - 1
-    const key = `${closedN}|${c[0].time}|${c[closedN - 1].time}|${exact.length}|${sources[0]?.length ?? 0}|${JSON.stringify(this.opts)}`
+    const key = `${closedN}|${c[0].time}|${c[closedN - 1].time}|${exact.length}|${sources[0]?.length ?? 0}|${historyFrom}|${JSON.stringify(this.opts)}`
     if (key !== this.key && sources.some((s) => s.length)) {
       this.key = key
       const closed = c.slice(0, closedN)
-      this.trades = this.compute(closed, barMs, autoRows, exact, sources)
+      this.trades = this.compute(closed, barMs, autoRows, exact, sources, historyFrom)
       for (const t of this.trades) this.useGexTarget(t, closed)
       for (const t of this.trades) {
         const k = tradeKey(t)
@@ -163,67 +198,82 @@ export class FootprintSignalsLayer {
     return events
   }
 
-  private compute(c: Candle[], barMs: number, autoRows: number, exact: [number, number][], sources: Print[][]): FpSignalTrade[] {
-    const ranges = c.slice(-100).map((k) => k.high - k.low).sort((a, b) => a - b)
-    const rs = niceStep((ranges[ranges.length >> 1] || 1) / autoRows)
+  /**
+   * Signals are read in fixed blocks of BLOCK_BARS bars aligned to the clock, each with its
+   * own warm-up bars and its own row size (from the block's first open). A block's result
+   * then depends only on its own bars and trades — never on where the chart's loaded
+   * history happens to start — so a refresh, or the window sliding on, never moves a trade.
+   * Blocks whose warm-up reaches before the loaded history are left out.
+   */
+  private compute(c: Candle[], barMs: number, autoRows: number, exact: [number, number][], sources: Print[][], historyFrom: number): FpSignalTrade[] {
     const covered = (t0: number, t1: number): boolean => exact.some(([a, b]) => a <= t0 + 2000 && b >= t1 - 2000)
-    const idx = new Map<number, number>()
-    const bars: (FpBar | null)[] = c.map((k, i) => {
-      if (!covered(k.time, k.time + barMs)) return null
-      idx.set(k.time, i)
-      return { time: k.time, open: k.open, high: k.high, low: k.low, close: k.close, rows: new Map() }
-    })
     const first = c[0].time
+    const idx = new Map<number, number>()
+    c.forEach((k, i) => {
+      if (covered(k.time, k.time + barMs)) idx.set(k.time, i)
+    })
+    // prints of each exact bar
+    const byBar: Print[][] = c.map(() => [])
     for (const src of sources) {
       for (const p of src) {
         if (p.time < first) continue
         const i = idx.get(first + Math.floor((p.time - first) / barMs) * barMs)
-        if (i === undefined) continue
-        const rows = (bars[i] as FpBar).rows
-        const r = Math.floor(p.price / rs)
-        const e = rows.get(r)
-        if (e) p.buy ? (e[0] += p.qty) : (e[1] += p.qty)
-        else rows.set(r, p.buy ? [p.qty, 0] : [0, p.qty])
+        if (i !== undefined) byBar[i].push(p)
       }
+    }
+    const o = { ...FP_SIGNAL_DEFAULTS, ...this.opts }
+    const warm = Math.max(o.trendBars, o.swingBars, 20) + 2
+    const blockMs = BLOCK_BARS * barMs
+    const from = Math.max(first, historyFrom)
+    const lastT = c[c.length - 1].time
+    const lowerBound = (t: number): number => {
+      let lo = 0, hi = c.length
+      while (lo < hi) {
+        const m = (lo + hi) >> 1
+        if (c[m].time < t) lo = m + 1
+        else hi = m
+      }
+      return lo
     }
     this.flow = new Map()
-    for (const b of bars) {
-      if (!b || !b.rows.size) continue
-      let delta = 0, vol = 0, sell = 0, buy = 0, sellLow = 0, buyHigh = 0
-      const lowRow = Math.floor(b.low / rs), highRow = Math.floor(b.high / rs)
-      for (const [r, [bu, se]] of b.rows) {
-        delta += bu - se
-        vol += bu + se
-        sell += se
-        buy += bu
-        if (r < lowRow + 2) sellLow += se
-        if (r > highRow - 2) buyHigh += bu
-      }
-      this.flow.set(b.time, { delta, vol, sellLowShare: sell ? sellLow / sell : 0, buyHighShare: buy ? buyHigh / buy : 0 })
-    }
-    // each run of consecutive exact bars is read on its own
     const out: FpSignalTrade[] = []
-    let start = -1
-    const flush = (end: number): void => {
-      if (start < 0) return
-      const base = start
-      const seg = bars.slice(base, end) as FpBar[]
-      start = -1
-      if (seg.length < 12) return
-      const at = (i: number): number => (base + i < c.length ? c[base + i].time : c[c.length - 1].time + (base + i - c.length + 1) * barMs)
-      for (const t of computeFootprintSignals(seg, rs, this.opts).trades) {
-        const st: FpSignalTrade = { ...t, signalTime: at(t.signalIndex), entryTime: at(t.entryIndex), exitTime: t.exitIndex === null ? null : at(t.exitIndex) }
-        // the exact run ended with the trade still open: follow it on the plain candles
-        if (st.r === null && base + seg.length < c.length) this.followOn(st, c, base + t.entryIndex, Math.max(base + seg.length, base + t.entryIndex))
-        out.push(st)
+    for (let b0 = Math.ceil((from + warm * barMs) / blockMs) * blockMs; b0 <= lastT; b0 += blockMs) {
+      const i0 = lowerBound(b0 - warm * barMs), iS = lowerBound(b0), i1 = lowerBound(b0 + blockMs)
+      if (iS >= c.length) break
+      const rs = blockRowSize(c[iS].open, barMs, autoRows)
+      const bars: (FpBar | null)[] = []
+      for (let i = i0; i < i1; i++) bars.push(byBar[i].length ? buildBar(c[i], byBar[i], rs) : null)
+      for (let i = iS; i < i1; i++) {
+        const b = bars[i - i0]
+        if (b) this.flow.set(b.time, barFlow(b, rs))
       }
+      // each run of consecutive exact bars is read on its own
+      let start = -1
+      const flush = (end: number): void => {
+        if (start < 0) return
+        const base = start
+        const seg = bars.slice(base, end) as FpBar[]
+        start = -1
+        if (seg.length < 12) return
+        const ci = (j: number): number => i0 + base + j // candle index of a segment bar
+        const at = (j: number): number => (ci(j) < c.length ? c[ci(j)].time : lastT + (ci(j) - c.length + 1) * barMs)
+        for (const t of computeFootprintSignals(seg, rs, this.opts).trades) {
+          // the block keeps the trades signalled inside it; warm-up bars only set the state
+          if (ci(t.signalIndex) < iS) continue
+          const st: FpSignalTrade = { ...t, signalTime: at(t.signalIndex), entryTime: at(t.entryIndex), exitTime: t.exitIndex === null ? null : at(t.exitIndex) }
+          // the exact run ended with the trade still open: follow it on the plain candles
+          const after = ci(seg.length)
+          if (st.r === null && after < c.length) this.followOn(st, c, ci(t.entryIndex), Math.max(after, ci(t.entryIndex)))
+          out.push(st)
+        }
+      }
+      bars.forEach((b, j) => {
+        if (b && b.rows.size) {
+          if (start < 0) start = j
+        } else flush(j)
+      })
+      flush(bars.length)
     }
-    bars.forEach((b, i) => {
-      if (b && b.rows.size) {
-        if (start < 0) start = i
-      } else flush(i)
-    })
-    flush(bars.length)
     return out
   }
 

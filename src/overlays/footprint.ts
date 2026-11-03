@@ -258,6 +258,8 @@ export default class FootprintOverlay {
   /** New footprint signals and exits (alerts, drawings) — set by the chart pane. */
   onSignal?: (e: FpSignalEvent, opts: FootprintOptions) => void
   private sigTimer = 0
+  /** Where the recorded-tape history was loaded from (signals need their warm-up inside it). */
+  private historyFrom = Infinity
   /** Current GEX Sabers levels for the symbol (empty: none / not loaded) — set by the chart pane. */
   getGexLevels?: () => FpGexLevel[]
   /** "<symbol>|<interval>": where to publish per-bar order flow for other studies — set by the chart pane. */
@@ -402,6 +404,7 @@ export default class FootprintOverlay {
     })
     const tries = [SUBS[best], ...SUBS.slice(best + 1).filter((s) => barMs / s[1] >= 2)]
     const first = c[Math.max(0, c.length - this.opts.historyBars)].time
+    this.historyFrom = first
     const now = Date.now()
     this.liveFrom = Infinity
     this.subs = []
@@ -451,7 +454,7 @@ export default class FootprintOverlay {
     const gex = this.opts.sigGex > 0 && this.getGexLevels
       ? { levels: this.getGexLevels(), mode: this.opts.sigGex === 2 ? ('only' as const) : ('tag' as const), near: this.opts.sigGexNear }
       : undefined
-    for (const e of this.signals.update(c, this.barMsCache, this.opts.autoRows, this.exact, [this.recorded, this.trades], Date.now(), gex)) {
+    for (const e of this.signals.update(c, this.barMsCache, this.opts.autoRows, this.exact, [this.recorded, this.trades], Date.now(), gex, this.historyFrom)) {
       // GEX-only: signals away from a GEX level stay quiet
       if (gex?.mode === 'only' && !e.gex) continue
       this.onSignal?.(e, this.opts)

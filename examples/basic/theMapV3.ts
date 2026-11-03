@@ -45,7 +45,15 @@ const REF_GAP_MS = 2 * 3_600_000
 const FIXED_RATIO = 10.91
 
 // ---- recorder cache (one index per page, snapshots fetched once — they never change) ----
-const idx = { entries: [] as MapV3IndexEntry[], fetchedAt: 0, triedAt: 0, inflight: false, error: null as string | null }
+const idx = {
+  entries: [] as MapV3IndexEntry[],
+  /** Recorded chart-side ratio reference per morning snapshot: symbol -> gold close at the previous 16:00 ET. */
+  refs: {} as Record<string, Record<string, number>>,
+  fetchedAt: 0,
+  triedAt: 0,
+  inflight: false,
+  error: null as string | null,
+}
 function loadIndex(): typeof idx {
   const wait = idx.error ? RETRY_MS : INDEX_REFRESH_MS
   if (!idx.inflight && Date.now() - idx.triedAt > wait) {
@@ -54,6 +62,9 @@ function loadIndex(): typeof idx {
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
         const j = (await r.json()) as { snapshots: MapV3IndexEntry[] }
+        // older recorders have no refs endpoint: the chart's candles are used then
+        const rf = await fetch(`${BASE}/refs?u=${U}`).then((x) => (x.ok ? x.json() : null)).catch(() => null)
+        idx.refs = (rf as { refs?: typeof idx.refs } | null)?.refs ?? {}
         idx.entries = j.snapshots ?? []
         idx.fetchedAt = Date.now()
         idx.error = null
@@ -151,7 +162,7 @@ const gmt = (t: number): string => {
 
 /** A locked MAP V3 session for the chart: its snapshots, GLD -> chart ratio and GLD pricing spot. */
 export type MapV3Session =
-  | { ok: true; m: MapV3Snapshot; c: MapV3Snapshot | null; ratio: number; spot: number; windowDays: number; stamp: string }
+  | { ok: true; m: MapV3Snapshot; c: MapV3Snapshot | null; ratio: number; spot: number; windowDays: number; stamp: string; stableRatio: boolean }
   | { ok: false; waiting: string }
 
 /** The session live at the last bar (bar replay: the replayed time). Shared with GEX Sabers. */
@@ -170,26 +181,35 @@ export function loadMapV3Session(candles: Candle[], p: Record<string, number>, c
   if (m === 'loading' || c === 'loading') return { ok: false, waiting: '⏳ Loading MAP V3 levels...' }
   if (!m) return { ok: false, waiting: `⚠ MAP V3 snapshot ${s.morning.id} unavailable` }
 
-  // GLD -> chart ratio and the session's GLD pricing spot
+  // GLD -> chart ratio and the session's GLD pricing spot. The recorded reference comes first:
+  // it is fixed per session, so the levels (and trades off them) never move with how much
+  // history the chart has loaded; the chart's own candles are the fallback for old recorders.
   let ratio = 1
+  let stableRatio = sym === 'GLD'
   if (sym !== 'GLD') {
     ratio = Number.isFinite(p.ratio) && p.ratio > 0 ? p.ratio : FIXED_RATIO
+    stableRatio = (p.ratioMode ?? 0) !== 0
     if ((p.ratioMode ?? 0) === 0) {
+      const recorded = idx.refs[s.morning.id]?.[sym]
       const chartRef = closeAt(candles, nyTime(prevNyWeekday(m.nyDate), 16, 0), REF_GAP_MS)
       const mark = m.delta[sym]
-      if (Number.isFinite(chartRef) && m.underlying.prevClose > 0) ratio = chartRef / m.underlying.prevClose
+      if (recorded > 0 && m.underlying.prevClose > 0) {
+        ratio = recorded / m.underlying.prevClose
+        stableRatio = true
+      } else if (Number.isFinite(chartRef) && m.underlying.prevClose > 0) ratio = chartRef / m.underlying.prevClose
       else if (mark > 0 && m.underlying.price > 0) ratio = mark / m.underlying.price
     }
   }
+  // the snapshot's own Delta mark is fixed too; the chart's candle at the snapshot is the fallback
   const chartAt = closeAt(candles, m.time, REF_GAP_MS)
-  const spot = Number.isFinite(chartAt) ? chartAt / ratio : m.delta[sym] > 0 ? m.delta[sym] / ratio : m.underlying.price
+  const spot = m.delta[sym] > 0 ? m.delta[sym] / ratio : Number.isFinite(chartAt) ? chartAt / ratio : m.underlying.price
 
   const stale = Date.now() - at < 2 * barMs && s.morning.nyDate !== sessionDate(Date.now())
   const stamp = stale
     ? `⚠ STALE · no ${sessionDate(Date.now())} snapshot yet · showing ${gmt(m.time)}`
     : `GLD ×${ratio.toFixed(3)} · Updated ${gmt(m.time)}${m.late ? ' (late)' : ''}`
   const windowDays = Math.max(1, Math.round(Number.isFinite(p.windowDays) ? p.windowDays : MAP_V3_DEFAULTS.windowDays))
-  return { ok: true, m, c: c ?? null, ratio, spot, windowDays, stamp }
+  return { ok: true, m, c: c ?? null, ratio, spot, windowDays, stamp, stableRatio }
 }
 
 export interface TheMapV3Model extends TheMapV2Model {
@@ -246,16 +266,20 @@ export function drawTheMapV3(g: CanvasRenderingContext2D, conv: Converters, rect
 const sessionLevelCache = new Map<string, MapSessionLevels | null>()
 
 /** Each recorded session's locked levels (chart prices), with the span of bars it applies to. */
-function sessionsFor(candles: Candle[], p: Record<string, number>, ctx: CanvasIndicatorContext): { start: number; end: number; levels: MapSessionLevels }[] {
+const TRADE_WARMUP_BARS = 15
+
+function sessionsFor(candles: Candle[], p: Record<string, number>, ctx: CanvasIndicatorContext, barMs: number): { start: number; end: number; levels: MapSessionLevels }[] {
   const mornings = loadIndex().entries.filter((e) => e.kind === 'morning').sort((a, b) => a.time - b.time)
   if (!candles.length) return []
   const out: { start: number; end: number; levels: MapSessionLevels }[] = []
   for (let k = 0; k < mornings.length; k++) {
     const start = mornings[k].time
     const end = k + 1 < mornings.length ? mornings[k + 1].time : Infinity
-    if (end < candles[0].time || start > candles[candles.length - 1].time + 86_400_000) continue
+    // a session is traded only when its whole start is loaded (with ATR warm-up before it) and its
+    // ratio is the recorded one: then nothing about it changes as the chart's window slides
+    if (start - TRADE_WARMUP_BARS * barMs < candles[0].time || start > candles[candles.length - 1].time) continue
     const ses = loadMapV3Session(candles, p, ctx, start + 1)
-    if (!ses.ok) continue
+    if (!ses.ok || !ses.stableRatio) continue
     const oiExpiry = OI_EXPIRY[p.oiExpiry ?? 0] ?? 'Every Expiry'
     const key = `${ses.m.nyDate}|${ses.ratio.toFixed(5)}|${ses.windowDays}|${oiExpiry}`
     let lv = sessionLevelCache.get(key)
@@ -275,7 +299,7 @@ function mapV3Trades(candles: Candle[], p: Record<string, number>, ctx: CanvasIn
   const last = candles[candles.length - 1]
   // closed bars only: a trade is decided on a bar's close
   const bars = last && last.time + barMs > Date.now() ? candles.slice(0, -1) : candles
-  const sessions = sessionsFor(candles, p, ctx)
+  const sessions = sessionsFor(candles, p, ctx, barMs)
   const levelsAt = (i: number): MapSessionLevels | null => {
     const t = bars[i].time
     for (const s of sessions) if (t >= s.start && t < s.end) return s.levels
