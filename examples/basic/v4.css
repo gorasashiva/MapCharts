@@ -1372,3 +1372,54 @@ html:fullscreen {
     top: 10px;
   }
 }
+
+/* ------------------------------------------------- fit to any screen width */
+/* The page itself is dark too, so nothing can ever show white around the app. */
+html,
+body {
+  background: var(--app-bg);
+}
+/* main.ts adds fit-1…fit-4 to the header while it is wider than the window. */
+#tv-header.fit-1 {
+  gap: 2px;
+  padding: 0 6px;
+}
+#tv-header.fit-1 .spot-controls {
+  gap: 1px;
+}
+#tv-header.fit-1 .mode-toggle button {
+  padding: 0 8px;
+}
+#tv-header.fit-2 .interval-group .iv-fav:nth-of-type(n + 5),
+#tv-header.fit-2 [data-hide-at='2'] {
+  display: none;
+}
+#tv-header.fit-3 .interval-group .iv-fav:nth-of-type(n + 4),
+#tv-header.fit-3 [data-hide-at='3'] {
+  display: none;
+}
+#tv-header.fit-3 .mode-toggle button {
+  padding: 0 6px;
+}
+/* last resort (phones): the header scrolls sideways instead of running off the screen */
+#tv-header.fit-4 {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+#tv-header.fit-4::-webkit-scrollbar {
+  display: none;
+}
+/* small screens: the footer is one row that swipes sideways instead of wrapping and widening the page */
+@media (max-width: 760px) {
+  #tv-footer {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  #tv-footer::-webkit-scrollbar {
+    display: none;
+  }
+  #tv-footer > * {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+}

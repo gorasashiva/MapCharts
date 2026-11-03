@@ -4292,27 +4292,44 @@ spotControls.append(
   buildChartType(),
   el('span', { class: 'tv-sep' }),
   buildIndicators(),
-  buildCompare(),
-  buildVolumeProfile(),
-  buildAlerts(),
-  buildReplayToggle(),
-  buildUndoRedo(),
+  hideAt(2, buildCompare()),
+  hideAt(2, buildVolumeProfile()),
+  hideAt(3, buildAlerts()),
+  hideAt(3, buildReplayToggle()),
+  hideAt(2, buildUndoRedo()),
   el('span', { class: 'tv-sep' }),
   buildPowerTools(),
-  buildStrategyTesterToggle(),
+  hideAt(3, buildStrategyTesterToggle()),
 )
 headerEl.append(
   buildBrand(),
   spotControls,
   el('span', { class: 'tv-spacer' }),
   buildModeToggle(),
-  el('span', { class: 'tv-sep' }),
-  buildLayoutSelector(),
+  hideAt(2, el('span', { class: 'tv-sep' })),
+  hideAt(3, buildLayoutSelector()),
   buildSavedLayouts(),
   buildSave(),
   buildTheme(),
   buildFullscreen(),
 )
+// Fit the header to any screen: while it is wider than the window, step through
+// compact levels (tighter spacing → fewer interval chips, compare / undo → alerts,
+// replay, tester, grid picker → swipe to scroll). Everything hidden stays reachable:
+// alerts and the tester from the right dock, the rest from ⌘K, undo from the keyboard.
+function hideAt<T extends HTMLElement>(level: number, node: T): T {
+  node.dataset.hideAt = String(level)
+  return node
+}
+const FIT_LEVELS = 4
+function fitHeader(): void {
+  for (let l = 1; l <= FIT_LEVELS; l++) headerEl.classList.remove(`fit-${l}`)
+  for (let l = 1; l <= FIT_LEVELS && headerEl.scrollWidth > headerEl.clientWidth + 1; l++) headerEl.classList.add(`fit-${l}`)
+}
+const headerFit = new ResizeObserver(() => fitHeader())
+headerFit.observe(headerEl)
+headerFit.observe(spotControls)
+window.addEventListener('resize', fitHeader)
 widgetBarEl.append(
   dockButton('watchlist', 'Watchlist (Alt+W)', WIDGET_ICONS.watchlist),
   dockButton('objects', 'Object tree — indicators, tools and drawings on this chart', WIDGET_ICONS.objects),
