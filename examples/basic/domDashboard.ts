@@ -14,10 +14,10 @@
 // book starts at app load; exchanges do not publish past order books.
 import { el } from './ui'
 import type { UnifiedProvider } from './provider'
-import type { Candle } from '../../src/index'
+import { INTERVAL_MS, type Candle, type Interval } from '../../src/index'
 import { classify, trust, type DomEventKind, type LevelKind, type LevelRecord, type StopPool } from '../../src/overlays/domLevelsModel'
 import { computeGexSabersModel } from './gexSabers'
-import { DOM_MARKETS, DomSession, type DomMarketSetup } from '../../src/overlays/domSession'
+import { DOM_HORIZONS_MS, DOM_MARKETS, DomSession, horizonFor, type DomMarketSetup } from '../../src/overlays/domSession'
 
 type SymbolSetup = DomMarketSetup
 const SYMBOLS = DOM_MARKETS
@@ -31,6 +31,7 @@ const SPEEDS: { label: string; pxPerSec: number }[] = [
 const KEEP_MS = 240_000
 const SNAP_MS = 500
 const GROUPS = [1, 2, 5, 10, 25, 50, 100]
+const ivOfMs = (ms: number): Interval => (Object.keys(INTERVAL_MS) as Interval[]).find((iv) => INTERVAL_MS[iv] === ms) ?? '1m'
 
 const KIND_COLOR: Record<LevelKind | 'pool' | 'swept', string> = {
   real: '#4fd1ff',
@@ -102,6 +103,7 @@ export class DomDashboardView {
   private symbolSelect: HTMLSelectElement
   private speedSelect: HTMLSelectElement
   private groupSelect: HTMLSelectElement
+  private horizonSelect: HTMLSelectElement
   private priceEl: HTMLElement
   private imbBar: HTMLElement
   private imbText: HTMLElement
@@ -118,6 +120,10 @@ export class DomDashboardView {
   private setup: SymbolSetup = SYMBOLS[0]
   private speed = SPEEDS[1]
   private group = 0 // 0 = auto
+  /** Timeframe the Read card trades on; 0 = follow the chart. */
+  private horizonPick = 0
+  private horizonMs = 60_000
+  private horizonCandles: Candle[] = []
   private show: Record<ToggleKey, boolean> = { heat: true, levels: true, gex: true }
   private active = false // on screen
   private running = false // feeds connected
@@ -153,7 +159,12 @@ export class DomDashboardView {
   private H = 0
   private colors = { bg: '#131722', panel: '#1e222d', border: '#2a2e39', text: '#d1d4dc', muted: '#787b86', up: '#089981', down: '#f23645' }
 
-  constructor(container: HTMLElement, private provider: UnifiedProvider) {
+  constructor(
+    container: HTMLElement,
+    private provider: UnifiedProvider,
+    /** The active chart's timeframe, for a horizon that follows the chart. */
+    private chartInterval: () => Interval = () => '1m',
+  ) {
     this.el = container
 
     const toolbar = el('div', { class: 'opt-toolbar dom-toolbar' })
@@ -177,6 +188,18 @@ export class DomDashboardView {
     this.groupSelect.addEventListener('change', () => {
       this.group = Number(this.groupSelect.value)
       this.topRow = 0
+    })
+
+    this.horizonSelect = el('select', {
+      class: 'opt-select',
+      title: 'Timeframe the Read card plans trades on: its candle range sizes stops and targets, and order flow is read over that many bars',
+      'aria-label': 'Trade horizon',
+    }) as HTMLSelectElement
+    this.horizonSelect.appendChild(el('option', { value: '0' }, 'Trades: chart TF'))
+    for (const ms of DOM_HORIZONS_MS) this.horizonSelect.appendChild(el('option', { value: String(ms) }, `Trades: ${ivOfMs(ms)}`))
+    this.horizonSelect.addEventListener('change', () => {
+      this.horizonPick = Number(this.horizonSelect.value)
+      this.syncHorizon()
     })
 
     const mkToggle = (key: ToggleKey, label: string, title: string): HTMLButtonElement => {
@@ -209,6 +232,7 @@ export class DomDashboardView {
       this.symbolSelect,
       this.speedSelect,
       this.groupSelect,
+      this.horizonSelect,
       this.priceEl,
       mkToggle('heat', 'Heat', 'Resting orders over time, behind the candles'),
       mkToggle('levels', 'Levels', 'Real walls, icebergs, spoofs and stop pools'),
@@ -291,9 +315,12 @@ export class DomDashboardView {
   private connect(): void {
     const gen = ++this.gen
     const s = this.setup
-    this.session = new DomSession(s, Date.now(), { candles: () => this.candles, poolCandles: () => this.poolCandles })
+    this.horizonMs = this.wantedHorizon()
+    this.session = new DomSession(s, Date.now(), { candles: () => this.candles, poolCandles: () => this.poolCandles, horizonCandles: () => this.horizonCandles }, this.horizonMs)
     this.candles = []
     this.poolCandles = []
+    this.horizonCandles = []
+    this.loadHorizonCandles()
     this.snaps = []
     this.orders = []
     this.vp.clear()
@@ -364,8 +391,10 @@ export class DomDashboardView {
     this.timers.push(
       window.setInterval(() => {
         this.flushMerge()
+        this.syncHorizon()
         if (this.session.tick(Date.now()) && this.active) this.renderRead()
       }, 250),
+      window.setInterval(() => this.loadHorizonCandles(), 30_000),
       window.setInterval(() => this.takeSnapshot(), SNAP_MS),
       window.setInterval(() => this.renderPanel(), 500),
       window.setInterval(loadPools, 5 * 60_000),
@@ -374,6 +403,36 @@ export class DomDashboardView {
     window.setTimeout(() => {
       if (gen === this.gen) this.refreshGex()
     }, 2500)
+  }
+
+  private wantedHorizon(): number {
+    return this.horizonPick || horizonFor(INTERVAL_MS[this.chartInterval()] ?? 60_000)
+  }
+
+  /** Follow the chart's timeframe (or the picked one) without dropping the book. */
+  private syncHorizon(): void {
+    const chartIv = ivOfMs(horizonFor(INTERVAL_MS[this.chartInterval()] ?? 60_000))
+    const auto = this.horizonSelect.options[0]
+    if (auto.textContent !== `Trades: chart TF (${chartIv})`) auto.textContent = `Trades: chart TF (${chartIv})`
+    const ms = this.wantedHorizon()
+    if (ms === this.horizonMs) return
+    this.horizonMs = ms
+    this.horizonCandles = []
+    this.session.setHorizon(ms)
+    this.loadHorizonCandles()
+    if (this.active) this.renderRead()
+  }
+
+  /** Candles on the horizon timeframe (1m reuses the live 1m candles). */
+  private loadHorizonCandles(): void {
+    const ms = this.horizonMs, gen = this.gen
+    if (ms === 60_000) return
+    void this.provider
+      .fetchCandles(this.setup.symbol, ivOfMs(ms), 60)
+      .then((cs) => {
+        if (gen === this.gen && ms === this.horizonMs) this.horizonCandles = cs
+      })
+      .catch(() => {})
   }
 
   private flushMerge(): void {
@@ -465,7 +524,7 @@ export class DomDashboardView {
         el(
           'div',
           { class: 'dom-read-plan' },
-          `${long ? 'Buy' : 'Sell'} zone ${px(pl.zone[0])}–${px(pl.zone[1])} (${pl.zoneFrom}) · stop ${px(pl.stop)} · target ${px(pl.target)} (${pl.targetFrom}) · ${pl.rr.toFixed(1)}R`,
+          `${ivOfMs(this.horizonMs)} trade · ${long ? 'Buy' : 'Sell'} zone ${px(pl.zone[0])}–${px(pl.zone[1])} (${pl.zoneFrom}) · stop ${px(pl.stop)} · target ${px(pl.target)} (${pl.targetFrom === '3 typical moves' ? `3 × ${ivOfMs(this.horizonMs)} range` : pl.targetFrom}) · ${pl.rr.toFixed(1)}R`,
         ),
       )
     }

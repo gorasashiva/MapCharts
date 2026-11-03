@@ -37,6 +37,9 @@ import DepthImbalanceOverlay from '../../src/overlays/depthImbalance'
 import LiquidityLevelsOverlay from '../../src/overlays/liquidityLevels'
 import BigTradesOverlay, { type BigTradesOptions } from '../../src/overlays/bigTrades'
 import DeepTradesOverlay, { type DeepTradesOptions } from '../../src/overlays/deepTrades'
+import HeavyAbsorptionOverlay, { type HeavyAbsorptionOverlayOptions } from '../../src/overlays/heavyAbsorption'
+import { askNotificationPermissionOnce, fireSignalAlert } from './signalAlert'
+import { computeGexSabersModel } from './gexSabers'
 import VolumeProfileOverlay, { type VolumeProfileOptions } from '../../src/overlays/volumeProfile'
 import FootprintOverlay, { type FootprintOptions, type RecordedTape } from '../../src/overlays/footprint'
 import GexOverlay, { type GexOptions, isGexUnderlying } from './gex'
@@ -194,6 +197,9 @@ export interface PaneState {
   bigTradesOptions?: Partial<BigTradesOptions>
   deepTrades?: boolean
   deepTradesOptions?: Partial<DeepTradesOptions>
+  heavyAbsorption?: boolean
+  heavyAbsorptionOptions?: Partial<HeavyAbsorptionOverlayOptions>
+  footprintOptions?: Partial<FootprintOptions>
   volumeProfileOptions?: Partial<VolumeProfileOptions>
   gexOptions?: Partial<GexOptions>
   gexV2Options?: Partial<GexV2Options>
@@ -385,6 +391,7 @@ export class ChartPane {
   private readonly confluence: ConfluenceOverlay
   private readonly bigTrades: BigTradesOverlay
   private readonly deepTrades: DeepTradesOverlay
+  private readonly heavyAbsorption: HeavyAbsorptionOverlay
   private readonly volumeProfileTool: VolumeProfileOverlay
   private readonly footprint: FootprintOverlay
   private readonly gex: GexOverlay
@@ -643,6 +650,14 @@ export class ChartPane {
     this.bigTrades.start()
     this.setBigTradesEnabled(this.state.bigTrades ?? false)
 
+    // Heavy Absorption: statistically big taker orders at their exact price, and
+    // whether the passive side held them — exact history from the tape recorder,
+    // live trades fed below. See heavyAbsorption.ts.
+    this.heavyAbsorption = new HeavyAbsorptionOverlay(this.canvasHost, this.engine, () => this.candles, (from, to) => this.fetchRecordedTape(from, to), this.state.heavyAbsorptionOptions)
+    this.heavyAbsorption.onAlert = (text, sound) => fireSignalAlert(`Heavy Absorption · ${this.state.symbol}`, text, sound)
+    this.heavyAbsorption.setSymbol(this.state.symbol)
+    this.setHeavyAbsorptionEnabled(this.state.heavyAbsorption ?? false)
+
     // Deep Trades: DeepCharts-style large-trade + resting-liquidity marker
     // approximation (no true MBO feed available) — see deepTrades.ts.
     this.deepTrades = new DeepTradesOverlay(this.canvasHost, this.engine, this.provider, this.state.deepTradesOptions)
@@ -662,13 +677,44 @@ export class ChartPane {
       this.engine,
       () => this.candles,
       (iv, limit, end) => this.provider.fetchCandles(this.state.symbol, iv as Interval, limit, end),
-      undefined,
+      this.state.footprintOptions,
       // exact history from the local tape recorder, where it was running
-      async (from, to) => {
-        const res = await fetch(`/tape/trades?symbol=${encodeURIComponent(this.state.symbol)}&from=${Math.floor(from)}&to=${Math.ceil(to)}`)
-        return res.ok ? ((await res.json()) as RecordedTape) : null
-      },
+      (from, to) => this.fetchRecordedTape(from, to),
     )
+    // footprint trade signals: alerts, and a position drawing per new signal when asked
+    this.footprint.onSignal = (e, o) => {
+      if (o.sigAlerts) {
+        if (e.kind === 'signal') askNotificationPermissionOnce()
+        fireSignalAlert(`Footprint ${e.kind === 'signal' ? 'signal' : 'exit'} · ${this.state.symbol} ${this.state.interval}`, e.text, o.sigSound)
+      }
+      if (e.kind === 'signal' && o.sigAutoDraw) {
+        const t = e.trade
+        this.engine.addDrawing({
+          id: `fpsig-${t.setup}-${t.signalTime}`,
+          tool: t.side > 0 ? 'longpos' : 'shortpos',
+          points: [
+            { time: t.entryTime, price: t.entry },
+            { time: t.entryTime, price: t.stop },
+            { time: t.entryTime, price: t.target },
+          ],
+          color: t.side > 0 ? '#26a69a' : '#ef5350',
+          width: 1,
+          props: { riskR: Math.abs(t.target - t.entry) / Math.abs(t.entry - t.stop), rightBars: 12 },
+        })
+      }
+    }
+    // GEX Sabers levels for the footprint signals' confluence (recomputed at most every 5s)
+    let gexAt = 0
+    let gexLevels: { price: number; label: string; strength: number }[] = []
+    this.footprint.storeKey = () => `${this.state.symbol}|${this.state.interval}`
+    this.footprint.getGexLevels = () => {
+      if (Date.now() - gexAt > 5000) {
+        gexAt = Date.now()
+        const m = computeGexSabersModel(this.candles, {}, { symbol: this.state.symbol, chartType: this.state.chartType })
+        gexLevels = m.sabers.map((sb) => ({ price: sb.price, label: sb.names.join(' · '), strength: sb.strength }))
+      }
+      return gexLevels
+    }
     this.footprint.setEnabled(this.state.chartType === 'footprint')
     this.setVolumeProfileToolEnabled(this.state.volumeProfileOptions?.enabled ?? false)
 
@@ -1245,6 +1291,27 @@ export class ChartPane {
     if (BIG_TRADES_HISTORY_KEYS.some((k) => k in patch)) void this.loadTapeHistory('big')
   }
 
+  /** Raw prints the local tape recorder saved for this symbol in [from, to] (null = no recorder / nothing recorded). */
+  private async fetchRecordedTape(from: number, to: number): Promise<RecordedTape | null> {
+    const res = await fetch(`/tape/trades?symbol=${encodeURIComponent(this.state.symbol)}&from=${Math.floor(from)}&to=${Math.ceil(to)}`)
+    return res.ok ? ((await res.json()) as RecordedTape) : null
+  }
+
+  setHeavyAbsorptionEnabled(on: boolean): void {
+    this.state.heavyAbsorption = on
+    if (on) askNotificationPermissionOnce()
+    this.heavyAbsorption.setEnabled(on)
+  }
+
+  getHeavyAbsorptionOptions(): HeavyAbsorptionOverlayOptions {
+    return this.heavyAbsorption.getOptions()
+  }
+
+  applyHeavyAbsorptionOption(patch: Partial<HeavyAbsorptionOverlayOptions>): void {
+    this.heavyAbsorption.setOptions(patch)
+    this.state.heavyAbsorptionOptions = { ...(this.state.heavyAbsorptionOptions ?? {}), ...patch }
+  }
+
   setDeepTradesEnabled(on: boolean): void {
     this.state.deepTrades = on
     this.deepTrades.setEnabled(on)
@@ -1305,6 +1372,7 @@ export class ChartPane {
   }
   applyFootprintOption(patch: Partial<FootprintOptions>): void {
     this.footprint.setOptions(patch)
+    this.state.footprintOptions = { ...(this.state.footprintOptions ?? {}), ...patch }
   }
   getVolumeProfileOptions(): VolumeProfileOptions {
     return this.volumeProfileTool.getOptions()
@@ -1730,6 +1798,7 @@ export class ChartPane {
         if (this.state.bigTrades) this.bigTrades.addTrade({ time: trade.time, timeUs: trade.timeUs, price: trade.price, volume: trade.qty, side: trade.side })
         this.footprint.addTrade(trade)
         if (this.state.deepTrades) this.deepTrades.addTrade({ time: trade.time, timeUs: trade.timeUs, price: trade.price, volume: trade.qty, side: trade.side })
+        if (this.state.heavyAbsorption) this.heavyAbsorption.addTrade({ time: trade.time, timeUs: trade.timeUs, price: trade.price, volume: trade.qty, side: trade.side })
         if (this.state.orderFlow) {
           this.orderflow.onTrade({
             time: trade.time,
@@ -1948,6 +2017,7 @@ export class ChartPane {
     this.bigTrades.reset() // live markers are priced for the OLD symbol — drop them, setCandles() below reseeds the estimate
     this.deepTrades.setSymbol(this.state.symbol)
     this.deepTrades.reset()
+    this.heavyAbsorption.setSymbol(this.state.symbol)
     this.volumeProfileTool.reset() // session/bars period must not mix candles from the old symbol
     // Session-anchored tools follow the new symbol's trading-day open (gold 03:30 IST) — see core/session.ts.
     this.volumeProfileTool.setSessionOpenHour(sessionOpenHourUTC(this.state.symbol))
@@ -2181,6 +2251,7 @@ export class ChartPane {
       // Recorded big trades: only those printed before the cursor bar closed.
       this.bigTrades.setCutoff(replayAt)
       this.deepTrades.setCutoff(replayAt)
+      this.heavyAbsorption.setCutoff(replayAt)
     }
   }
 
@@ -2413,6 +2484,7 @@ export class ChartPane {
     this.gex.setReplayTime(null)
     this.bigTrades.setCutoff(null)
     this.deepTrades.setCutoff(null)
+    this.heavyAbsorption.setCutoff(null)
     this.ivWalls.setReplay(null)
     this.cancelBarPick()
     this.engine.setReplayCursor(null)
@@ -2613,6 +2685,7 @@ export class ChartPane {
     this.confluence.destroy()
     this.bigTrades.destroy()
     this.deepTrades.destroy()
+    this.heavyAbsorption.destroy()
     this.volumeProfileTool.destroy()
     this.footprint.destroy()
     this.gex.destroy()

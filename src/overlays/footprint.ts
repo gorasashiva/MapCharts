@@ -33,6 +33,9 @@ import type { Candle } from '../core/types'
 import type { IChartEngine } from '../chart/types'
 import { buyShare } from './profileZones'
 import { lazyCanvas } from './lazyCanvas'
+import { FootprintSignalsLayer, type FpSignalEvent } from './footprintSignalsLayer'
+import { publishFootprintBars } from './footprintBarStore'
+import { FP_SIGNAL_DEFAULTS, type FpGexLevel, type FpSignalOptions } from './footprintSignalsModel'
 
 /** 'profile' draws each bar as its own volume-at-price histogram instead of number cells. */
 export type FootprintMode = 'bidask' | 'delta' | 'volume' | 'profile'
@@ -51,6 +54,27 @@ export interface FootprintOptions {
   historyBars: number
   /** Paint bearish candles with positive delta, and bullish ones with negative delta, yellow. */
   divergenceCandles: boolean
+  /** Trade signals from the footprint (footprintSignalsModel.ts): plots, alerts, drawings. */
+  signals: boolean
+  sigAbsorb: boolean
+  sigTrap: boolean
+  sigStack: boolean
+  sigDiverge: boolean
+  /** Target in R. */
+  sigRR: number
+  /** Reversals only this many average ranges from the EMA (0 = anywhere). */
+  sigStretchAtr: number
+  sigTrendBars: number
+  /** Past signals and their results, or only the live one. */
+  sigHistory: boolean
+  sigAlerts: boolean
+  sigSound: boolean
+  /** Add a long/short position drawing for each new live signal. */
+  sigAutoDraw: boolean
+  /** GEX Sabers confluence: 0 off, 1 tag signals at a GEX level, 2 only those (alerts / drawings / live). */
+  sigGex: number
+  /** "At a GEX level": the signal's extreme within this many average bar ranges. */
+  sigGexNear: number
 }
 
 export const FOOTPRINT_DEFAULTS: FootprintOptions = {
@@ -64,6 +88,31 @@ export const FOOTPRINT_DEFAULTS: FootprintOptions = {
   showTotals: true,
   historyBars: 300,
   divergenceCandles: true,
+  signals: true,
+  sigAbsorb: FP_SIGNAL_DEFAULTS.setups.absorb,
+  sigTrap: FP_SIGNAL_DEFAULTS.setups.trap,
+  sigStack: FP_SIGNAL_DEFAULTS.setups.stack,
+  sigDiverge: FP_SIGNAL_DEFAULTS.setups.diverge,
+  sigRR: FP_SIGNAL_DEFAULTS.rr,
+  sigStretchAtr: FP_SIGNAL_DEFAULTS.stretchAtr,
+  sigTrendBars: FP_SIGNAL_DEFAULTS.trendBars,
+  sigHistory: true,
+  sigAlerts: true,
+  sigSound: true,
+  sigAutoDraw: false,
+  sigGex: 1,
+  sigGexNear: 0.5,
+}
+
+/** The signal model's options from the footprint's. */
+function signalOpts(o: FootprintOptions): Partial<FpSignalOptions> {
+  return {
+    setups: { absorb: o.sigAbsorb, trap: o.sigTrap, stack: o.sigStack, diverge: o.sigDiverge },
+    imbalance: o.imbalancePct / 100,
+    rr: o.sigRR,
+    stretchAtr: o.sigStretchAtr,
+    trendBars: o.sigTrendBars,
+  }
 }
 
 const DIVERGENCE_YELLOW = '#ffd600'
@@ -205,6 +254,14 @@ export default class FootprintOverlay {
   private builtFor = '' // cache key of the aggregation
   private loadGen = 0
   private barMsCache = 60_000
+  private readonly signals = new FootprintSignalsLayer()
+  /** New footprint signals and exits (alerts, drawings) — set by the chart pane. */
+  onSignal?: (e: FpSignalEvent, opts: FootprintOptions) => void
+  private sigTimer = 0
+  /** Current GEX Sabers levels for the symbol (empty: none / not loaded) — set by the chart pane. */
+  getGexLevels?: () => FpGexLevel[]
+  /** "<symbol>|<interval>": where to publish per-bar order flow for other studies — set by the chart pane. */
+  storeKey?: () => string
 
   constructor(
     private readonly container: HTMLElement,
@@ -215,6 +272,7 @@ export default class FootprintOverlay {
     private readonly fetchTape?: TapeFetcher,
   ) {
     this.opts = { ...FOOTPRINT_DEFAULTS, ...opts }
+    this.signals.opts = signalOpts(this.opts)
     this.canvas = document.createElement('canvas')
     Object.assign(this.canvas.style, { position: 'absolute', left: '0', top: '0', pointerEvents: 'none', zIndex: '16' })
     container.appendChild(this.canvas)
@@ -243,6 +301,11 @@ export default class FootprintOverlay {
     const reload = patch.historyBars !== undefined && patch.historyBars !== this.opts.historyBars
     this.opts = { ...this.opts, ...patch }
     this.builtFor = ''
+    const so = signalOpts(this.opts)
+    if (JSON.stringify(so) !== JSON.stringify(this.signals.opts)) {
+      this.signals.opts = so
+      this.signals.reset()
+    }
     if (reload && this.enabled) void this.loadHistory()
   }
 
@@ -258,8 +321,10 @@ export default class FootprintOverlay {
         this.raf = requestAnimationFrame(loop)
       }
       this.raf = requestAnimationFrame(loop)
+      this.sigTimer = window.setInterval(() => this.pollSignals(), 1000)
     } else {
       cancelAnimationFrame(this.raf)
+      clearInterval(this.sigTimer)
       this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height)
     }
   }
@@ -279,7 +344,13 @@ export default class FootprintOverlay {
     this.bars.clear()
     this.builtFor = ''
     this.liveFrom = Infinity
+    this.signals.reset()
     if (this.enabled) void this.loadHistory()
+  }
+
+  /** The signals' trades (for the Strategy Tester / tests). */
+  signalTrades(): FootprintSignalsLayer['trades'] {
+    return this.signals.trades
   }
 
   addTrade(t: { time: number; price: number; qty: number; side: 'buy' | 'sell' }): void {
@@ -370,6 +441,22 @@ export default class FootprintOverlay {
     this.trades = this.early.filter((t) => t.time >= liveFrom)
     this.early = []
     this.builtFor = ''
+  }
+
+  /** Read new signals / exits and hand them to onSignal (also on a timer: frames stop in a background tab). */
+  private pollSignals(): void {
+    const c = this.getCandles()
+    if (!this.opts.signals || this.liveFrom === Infinity || c.length < 3) return
+    this.barMsCache = this.barMs(c)
+    const gex = this.opts.sigGex > 0 && this.getGexLevels
+      ? { levels: this.getGexLevels(), mode: this.opts.sigGex === 2 ? ('only' as const) : ('tag' as const), near: this.opts.sigGexNear }
+      : undefined
+    for (const e of this.signals.update(c, this.barMsCache, this.opts.autoRows, this.exact, [this.recorded, this.trades], Date.now(), gex)) {
+      // GEX-only: signals away from a GEX level stay quiet
+      if (gex?.mode === 'only' && !e.gex) continue
+      this.onSignal?.(e, this.opts)
+    }
+    if (this.storeKey && this.signals.flow.size) publishFootprintBars(this.storeKey(), this.signals.flow)
   }
 
   private barTimeOf(c: Candle[], t: number): number | null {
@@ -464,9 +551,15 @@ export default class FootprintOverlay {
             : 'no history from the exchange — live trades only'
     ctx.fillText(`Footprint · row ${fmt(rs)} · ${src}`, rect.x + 8, rect.y + rect.height - 10)
     if (this.opts.divergenceCandles) this.drawDivergenceCandles(c, conv, rect, spacing)
+    const signals = (): void => {
+      if (!this.opts.signals || this.liveFrom === Infinity) return
+      this.pollSignals()
+      this.signals.draw(ctx, conv, rect, c, this.opts.sigHistory)
+    }
     // a profile reads fine much narrower than number cells
     if (spacing < (this.opts.mode === 'profile' ? 6 : 14)) {
       ctx.fillText('Zoom in to see footprint cells', rect.x + 8, rect.y + rect.height - 24)
+      signals()
       ctx.restore()
       return
     }
@@ -480,6 +573,7 @@ export default class FootprintOverlay {
       if (!rows || rows.size === 0) continue
       this.drawBar(k, rows, xc, spacing, conv, imb, this.isExact(k.time, Math.min(k.time + this.barMsCache, Date.now())))
     }
+    signals()
     ctx.restore()
   }
 

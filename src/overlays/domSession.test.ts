@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DomSession, marketSetup, ADVICE_EVERY_MS } from './domSession'
+import { DomSession, marketSetup, ADVICE_EVERY_MS, domWindows, horizonFor } from './domSession'
 
 const SETUP = { ...marketSetup('TEST'), minWallUsd: 100, absorbUsd: 500, persistMs: 0 }
 
@@ -59,5 +59,31 @@ describe('DOM session — the replayable brain', () => {
     const s = new DomSession(SETUP, 0, { candles: () => given })
     s.onTrade(100, 1, true, 10_000)
     expect(s.candles).toBe(given)
+  })
+})
+
+describe('DOM session — trade horizon', () => {
+  it('maps the chart timeframe to a supported horizon (1m … 1h)', () => {
+    expect(horizonFor(1_000)).toBe(60_000)
+    expect(horizonFor(300_000)).toBe(300_000)
+    expect(horizonFor(7_200_000)).toBe(3_600_000)
+  })
+
+  it('at 1m keeps the original windows; longer horizons count the same bars, capped at the 2h of kept events', () => {
+    expect(domWindows(60_000)).toMatchObject({ flowMs: 180_000, absorbMs: 600_000, sweepMs: 900_000, absorbLevelMs: 1_800_000, holdMs: 10_000, warmupMs: 180_000, expireMs: 1_800_000 })
+    expect(domWindows(900_000)).toMatchObject({ flowMs: 2_700_000, absorbMs: 7_200_000, holdMs: 150_000, warmupMs: 1_800_000, expireMs: 27_000_000 })
+  })
+
+  it('reads the typical move off horizon candles, and switching horizon keeps the book', () => {
+    const c = (time: number, range: number) => ({ time, open: 100, high: 100 + range / 2, low: 100 - range / 2, close: 100, volume: 1 })
+    const m1 = Array.from({ length: 40 }, (_, i) => c(i * 60_000, 0.2))
+    const m15 = Array.from({ length: 40 }, (_, i) => c(i * 900_000, 2))
+    const s = new DomSession(SETUP, 0, { candles: () => m1, poolCandles: () => [], horizonCandles: () => m15 })
+    run(s, 4000)
+    expect(s.advisorInput(4000)!.typicalMove).toBeCloseTo(0.2)
+    s.setHorizon(900_000)
+    expect(s.advisorInput(4000)!.typicalMove).toBeCloseTo(2)
+    expect(s.advisorInput(4000)!.warmupMs).toBe(1_800_000)
+    expect(s.tracker.mid).toBeGreaterThan(0)
   })
 })

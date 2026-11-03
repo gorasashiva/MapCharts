@@ -22,13 +22,16 @@ import { sessionsIndicator, computeSessionsModel, drawSessions, type SessionsMod
 import { marketStructure, computeMarketStructureModel, drawMarketStructure, marketStructureTrades, type MarketStructureModel } from './marketStructure'
 import { theMap, computeTheMapModel, drawTheMap, type TheMapModel } from './theMap'
 import { theMapV2, computeTheMapV2Model, drawTheMapV2, type TheMapV2Model } from './theMapV2'
-import { theMapV3, computeTheMapV3Model, drawTheMapV3 } from './theMapV3'
+import { theMapV3, computeTheMapV3Model, drawTheMapV3, mapV3StrategyTrades, type TheMapV3Model } from './theMapV3'
 import { gexSabers, computeGexSabersModel, drawGexSabers, type GexSabersModel } from './gexSabers'
 import { renkoFade, computeRenkoFadeModel, drawRenkoFade, renkoFadeTrades, type RenkoFadeModel } from './renkoFade'
 import { mtfCisd, computeMtfCisdModel, drawMtfCisd, type MtfCisdModel } from './mtfCisd'
 import { hlBlocks, computeHlBlocksModel, drawHlBlocks, type HlBlocksModel } from './hlBlocks'
 import { aiTrades, computeAiTradesModel, drawAiTrades, type AiTradesModel } from './aiTrades'
 import { bulbArrow, computeBulbArrowModel, drawBulbArrow, type BulbArrowModel } from './bulbArrow'
+import { flyingCpr, computeFlyingCprModel, drawFlyingCpr, type FlyingCprModel } from './flyingCpr'
+import { tpoFade, computeTpoFadeModel, drawTpoFade, tpoFadeTrades, type TpoFadeModel } from './tpoFade'
+import { fvgMid, computeFvgMidModel, drawFvgMid, type FvgMidModel } from './fvgMid'
 import { computeVortex } from '../../src/overlays/vortexModel'
 
 // ---- Pine-style helpers (ta.*) ----
@@ -1416,7 +1419,7 @@ function salaarSignals(candles: Candle[], params: Record<string, number>): Signa
  *  leg a full recompute would find, silently freezing the plotted levels.
  *  See lionPivots/lionFindLeg above: the swing search needs pivots from the
  *  full loaded history, not just the last `warmupBars` candles. */
-export const FULL_HISTORY_INDICATOR_IDS = new Set<string>([lionIndicator.id, shadow1sc.id, zigzagFib.id, sessionReversal.id, rangeBreakout.id, renkoFade.id, sessionsIndicator.id, marketStructure.id, mtfCisd.id, hlBlocks.id, aiTrades.id, bulbArrow.id])
+export const FULL_HISTORY_INDICATOR_IDS = new Set<string>([lionIndicator.id, shadow1sc.id, zigzagFib.id, sessionReversal.id, rangeBreakout.id, renkoFade.id, sessionsIndicator.id, marketStructure.id, mtfCisd.id, hlBlocks.id, aiTrades.id, bulbArrow.id, flyingCpr.id, tpoFade.id, fvgMid.id])
 
 const SIGNAL_SOURCES: Record<string, (candles: Candle[], params: Record<string, number>) => Signal[]> = {
   [chotaPanditV3.id]: chotaSignals,
@@ -1495,7 +1498,8 @@ const CANVAS_SOURCES: Record<string, CanvasSource> = {
   },
   [theMapV3.id]: {
     compute: computeTheMapV3Model,
-    draw: (g, conv, rect, candles, model, ctx) => drawTheMapV3(g, conv, rect, candles, model as TheMapV2Model, ctx),
+    draw: (g, conv, rect, candles, model, ctx) => drawTheMapV3(g, conv, rect, candles, model as TheMapV3Model, ctx),
+    strategy: { name: 'MAP V3 · SYNDICATE playbook', trades: mapV3StrategyTrades },
   },
   [gexSabers.id]: {
     compute: computeGexSabersModel,
@@ -1516,6 +1520,19 @@ const CANVAS_SOURCES: Record<string, CanvasSource> = {
   [bulbArrow.id]: {
     compute: computeBulbArrowModel,
     draw: (g, conv, rect, candles, model, ctx) => drawBulbArrow(g, conv, rect, candles, model as BulbArrowModel, ctx),
+  },
+  [flyingCpr.id]: {
+    compute: computeFlyingCprModel,
+    draw: (g, conv, rect, candles, model, ctx) => drawFlyingCpr(g, conv, rect, candles, model as FlyingCprModel, ctx),
+  },
+  [tpoFade.id]: {
+    compute: computeTpoFadeModel,
+    draw: (g, conv, rect, candles, model, ctx) => drawTpoFade(g, conv, rect, candles, model as TpoFadeModel, ctx),
+    strategy: { name: 'TPO VA Fade (prev-session value-area fade)', trades: tpoFadeTrades },
+  },
+  [fvgMid.id]: {
+    compute: computeFvgMidModel,
+    draw: (g, conv, rect, candles, model, ctx) => drawFvgMid(g, conv, rect, candles, model as FvgMidModel, ctx),
   },
 }
 
@@ -1559,6 +1576,9 @@ export const CUSTOM_INDICATORS: IndicatorDef[] = [
   hlBlocks,
   aiTrades,
   bulbArrow,
+  flyingCpr,
+  tpoFade,
+  fvgMid,
   vortex,
 ]
 

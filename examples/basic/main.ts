@@ -29,6 +29,7 @@ import {
 import { el, ICONS, registerPopover, closeAllPopovers, layoutPreview, toHex } from './ui'
 import { ChartPane, defaultIndicatorInstance, type PaneState, type IndicatorInstance } from './pane'
 import type { BigTradesOptions } from '../../src/overlays/bigTrades'
+import type { HeavyAbsorptionOverlayOptions } from '../../src/overlays/heavyAbsorption'
 import type { FvgStrategyOptions } from '../../src/overlays/fvgStrategy'
 import type { IvFadeOptions } from '../../src/overlays/ivFade'
 import { sessionOpenHourUTC, sessionOpenLabelIST } from '../../src/core/session'
@@ -220,7 +221,7 @@ let spotControls: HTMLElement
 const modeButtons: Partial<Record<AppMode, HTMLElement>> = {}
 const optionsView = new OptionsView(optionsEl, theme)
 const gexDashboardView = new GexDashboardView(gexdashEl)
-const domDashboardView = new DomDashboardView(domdashEl, provider)
+const domDashboardView = new DomDashboardView(domdashEl, provider, () => active()?.state.interval ?? '1m')
 domDashboardView.start() // runs in the background so the DOM view never starts over
 const footerStatus = el('div', { class: 'status loading' })
 const footerDot = el('span', { class: 'dot' })
@@ -1182,6 +1183,65 @@ function openBigTradesSettings(p: ChartPane): void {
   document.body.appendChild(backdrop)
 }
 
+function openHeavyAbsorptionSettings(p: ChartPane): void {
+  const opts = p.getHeavyAbsorptionOptions()
+  const set = (patch: Partial<HeavyAbsorptionOverlayOptions>): void => p.applyHeavyAbsorptionOption(patch)
+  const { backdrop, modal, close } = openModal('Heavy Absorption')
+
+  // Big = rare for this symbol's own tape: a rolling percentile is steady on skewed crypto order sizes.
+  modal.appendChild(el('div', { class: 'modal-head' }, 'Detection'))
+  let pctInput: HTMLInputElement | null = null
+  let kInput: HTMLInputElement | null = null
+  modalSelectField(modal, 'Threshold method', opts.method, [
+    ['percentile', 'Percentile (rarest orders)'],
+    ['logSigma', 'Mean + k·σ of log size'],
+    ['sigma', 'Mean + k·σ of size (classic)'],
+  ], (v) => {
+    set({ method: v as HeavyAbsorptionOverlayOptions['method'] })
+    if (pctInput) pctInput.disabled = v !== 'percentile'
+    if (kInput) kInput.disabled = v === 'percentile'
+  })
+  pctInput = modalNumField(modal, 'Percentile (99.95 = top 0.05%)', opts.percentile, 90, 99.999, 0.01, (v) => set({ percentile: v }))
+  kInput = modalNumField(modal, 'Std-dev multiplier (k)', opts.stdMult, 0.5, 6, 0.1, (v) => set({ stdMult: v }))
+  pctInput.disabled = opts.method !== 'percentile'
+  kInput.disabled = opts.method === 'percentile'
+  modalNumField(modal, 'Lookback (bars)', opts.lookback, 10, 2000, 10, (v) => set({ lookback: v }))
+  modalNumField(modal, 'Min volume filter', opts.minVolume, 0, 1_000_000, 0.1, (v) => set({ minVolume: v }))
+  modalSelectField(modal, 'Markers', opts.group, [
+    ['bar', 'One per bar and side (total big volume)'],
+    ['order', 'One per big order'],
+  ], (v) => set({ group: v as HeavyAbsorptionOverlayOptions['group'] }))
+  modalNumField(modal, 'Days of recorded tape', opts.daysToLoad, 1, 14, 1, (v) => set({ daysToLoad: v }))
+
+  modal.appendChild(el('div', { class: 'modal-head' }, 'Absorption check'))
+  modalNumField(modal, 'Confirmation bars', opts.confirmBars, 1, 50, 1, (v) => set({ confirmBars: v }))
+  modalNumField(modal, 'Break tolerance (× ATR)', opts.tolAtr, 0, 3, 0.05, (v) => set({ tolAtr: v }))
+  modalSelectField(modal, 'Show', opts.show, [
+    ['all', 'All markers'],
+    ['notFailed', 'Absorbed + pending'],
+    ['absorbed', 'Absorbed only'],
+  ], (v) => set({ show: v as HeavyAbsorptionOverlayOptions['show'] }))
+  modalCheckField(modal, 'Level line until broken', opts.showLevels, (v) => set({ showLevels: v }))
+  modalNumField(modal, 'Max level length (bars)', opts.maxLevelBars, 5, 2000, 5, (v) => set({ maxLevelBars: v }))
+
+  modal.appendChild(el('div', { class: 'modal-head' }, 'Appearance'))
+  modalColorField(modal, 'Bull (buy) circles', opts.bullColor, (v) => set({ bullColor: v }))
+  modalColorField(modal, 'Bear (sell) circles', opts.bearColor, (v) => set({ bearColor: v }))
+  modalColorField(modal, 'Text', opts.textColor, (v) => set({ textColor: v }))
+  modalNumField(modal, 'Min size (px)', opts.minSize, 4, 100, 1, (v) => set({ minSize: v }))
+  modalNumField(modal, 'Max size (px)', opts.maxSize, 4, 200, 1, (v) => set({ maxSize: v }))
+  modalNumField(modal, 'Opacity', opts.alpha, 0.1, 1, 0.05, (v) => set({ alpha: v }))
+  modalCheckField(modal, 'Show volume', opts.showValue, (v) => set({ showValue: v }))
+
+  modal.appendChild(el('div', { class: 'modal-head' }, 'Alerts'))
+  modalCheckField(modal, 'New big trade (at bar close)', opts.alertOnBarClose, (v) => set({ alertOnBarClose: v }))
+  modalCheckField(modal, 'Absorption confirmed', opts.alertOnConfirm, (v) => set({ alertOnConfirm: v }))
+  modalCheckField(modal, 'Sound', opts.alertSound, (v) => set({ alertSound: v }))
+
+  modalDoneFoot(modal, close)
+  document.body.appendChild(backdrop)
+}
+
 function openDeepTradesSettings(p: ChartPane): void {
   const opts = p.getDeepTradesOptions()
   const { backdrop, modal, close } = openModal('Deep Trades')
@@ -1248,6 +1308,42 @@ function openFootprintSettings(p: ChartPane): void {
   modalCheckField(modal, 'Show delta / volume under bars', o.showTotals, (v) => set({ showTotals: v }))
   modalCheckField(modal, 'Yellow candles where delta disagrees with direction', o.divergenceCandles, (v) => set({ divergenceCandles: v }))
   modalNumField(modal, 'History depth (bars)', o.historyBars, 20, 2000, 10, (v) => set({ historyBars: v }))
+
+  modal.appendChild(el('div', { class: 'modal-head' }, 'Trade signals'))
+  const sigNote = el(
+    'p',
+    {},
+    'Setups read off exact-trade footprint bars, each with entry, stop and target. Tested on ~150 h of recorded XAUT/BTC/ETH tape (5m): absorption and trapped traders taken only when price is stretched ≥ 1 average range from the 20-bar EMA won 50% at 2R (+0.5R gross, +0.24R after 0.02% costs; negative at 0.05%). Stacked-imbalance retests and delta divergence did not hold up after costs, so they start off. A small sample — the scorecard on the chart keeps the live record.',
+  )
+  sigNote.style.cssText = 'font-size:11.5px;color:var(--muted);line-height:1.5;margin:0 0 4px;'
+  modal.appendChild(sigNote)
+  modalCheckField(modal, 'Show trade signals', o.signals, (v) => set({ signals: v }))
+  modalCheckField(modal, 'Absorption at extreme', o.sigAbsorb, (v) => set({ sigAbsorb: v }))
+  modalCheckField(modal, 'Trapped traders', o.sigTrap, (v) => set({ sigTrap: v }))
+  modalCheckField(modal, 'Stacked imbalance retest (weak in the study)', o.sigStack, (v) => set({ sigStack: v }))
+  modalCheckField(modal, 'Delta divergence at extreme (weak in the study)', o.sigDiverge, (v) => set({ sigDiverge: v }))
+  modalNumField(modal, 'Target (R multiple)', o.sigRR, 0.5, 10, 0.5, (v) => set({ sigRR: v }))
+  modalNumField(modal, 'Reversals: stretch from EMA (avg ranges, 0 = off)', o.sigStretchAtr, 0, 5, 0.25, (v) => set({ sigStretchAtr: v }))
+  modalNumField(modal, 'EMA length (bars)', o.sigTrendBars, 5, 200, 1, (v) => set({ sigTrendBars: v }))
+  modalCheckField(modal, 'Show past signals and results', o.sigHistory, (v) => set({ sigHistory: v }))
+  modalCheckField(modal, 'Alerts on new signals and exits', o.sigAlerts, (v) => set({ sigAlerts: v }))
+  modalCheckField(modal, 'Alert sound', o.sigSound, (v) => set({ sigSound: v }))
+  modalCheckField(modal, 'Draw a long/short position for each new signal', o.sigAutoDraw, (v) => set({ sigAutoDraw: v }))
+
+  modal.appendChild(el('div', { class: 'modal-head' }, 'GEX Sabers confluence'))
+  const gexNote = el(
+    'p',
+    {},
+    'Weighs each new signal against the GEX Sabers levels (Delta options: BTC, ETH, gold) at the moment it fires: a long whose low tested a GEX level, or a short whose high did, is tagged "@GEX", and the next GEX level past the entry (≥ 1R away) becomes a second target (TP2). GEX has no history, so past signals are never tagged and this combination is untested — the scorecard keeps its own live record.',
+  )
+  gexNote.style.cssText = 'font-size:11.5px;color:var(--muted);line-height:1.5;margin:0 0 4px;'
+  modal.appendChild(gexNote)
+  modalSelectField(modal, 'Use GEX levels', String(o.sigGex), [
+    ['0', 'Off'],
+    ['1', 'Tag signals at a GEX level'],
+    ['2', 'Only signals at a GEX level (alerts, drawings, live)'],
+  ], (v) => set({ sigGex: Number(v) }))
+  modalNumField(modal, 'At a level = within (avg bar ranges)', o.sigGexNear, 0.1, 3, 0.1, (v) => set({ sigGexNear: v }))
   modalDoneFoot(modal, close)
   document.body.appendChild(backdrop)
 }
@@ -2090,6 +2186,7 @@ const POWER_TOOLS: PowerTool[] = [
   { id: 'confluence', label: 'Confluence Setups', icon: '🎯', isOn: (p) => !!p.state.confluence, setOn: (p, on) => p.setConfluenceEnabled(on) },
   { id: 'bigTrades', label: 'Big Trades', icon: '🐋', isOn: (p) => !!p.state.bigTrades, setOn: (p, on) => p.setBigTradesEnabled(on), openSettings: openBigTradesSettings },
   { id: 'deepTrades', label: 'Deep Trades', icon: '💎', isOn: (p) => !!p.state.deepTrades, setOn: (p, on) => p.setDeepTradesEnabled(on), openSettings: openDeepTradesSettings },
+  { id: 'heavyAbsorption', label: 'Heavy Absorption', icon: '🧲', isOn: (p) => !!p.state.heavyAbsorption, setOn: (p, on) => p.setHeavyAbsorptionEnabled(on), openSettings: openHeavyAbsorptionSettings },
   {
     id: 'footprint',
     label: 'Volume Footprint',

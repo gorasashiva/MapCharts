@@ -95,6 +95,27 @@ describe('DOM advisor — readings', () => {
   })
 })
 
+describe('DOM advisor — trade horizon', () => {
+  it('sizes the plan by the typical move, so a bigger horizon plans a bigger trade', () => {
+    const wide = { ...BULLISH, typicalMove: 0.8, resistances: [{ price: 104, label: 'GEX R1', strength: 70 }] }
+    const small = advise({ ...wide, typicalMove: 0.2 }).plan!
+    const big = advise(wide).plan!
+    // stop 0.75 typical moves beyond the wall at 99.9
+    expect(small.stop).toBeCloseTo(99.75)
+    expect(big.stop).toBeCloseTo(99.3)
+    expect(big.target).toBe(104)
+  })
+
+  it('skips a target level inside half a typical move and aims for the next one out', () => {
+    const plan = advise({ ...BULLISH, resistances: [{ price: 100.05, label: 'REAL WALL', strength: 80 }, { price: 100.8, label: 'GEX R1', strength: 70 }] }).plan!
+    expect(plan.targetFrom).toBe('GEX R1')
+  })
+
+  it('warms up for as long as the input says', () => {
+    expect(advise({ ...BULLISH, warmupMs: 15 * 60_000 }).cautions[0]).toMatch(/Still reading the book \(5 min to go\)/)
+  })
+})
+
 describe('DOM advisor — live record', () => {
   const plan = { zone: [99.9, 100] as [number, number], stop: 99.75, target: 100.8, rr: 3.2, zoneFrom: 'REAL WALL', targetFrom: 'GEX R1' }
 

@@ -25,9 +25,11 @@ export interface AdvisorInput {
   price: number
   /** How long the book has been watched (ms). */
   watchedMs: number
+  /** Watch this long before calling anything (default WARMUP_MS). */
+  warmupMs?: number
   /** The feed has gone quiet. */
   stale: boolean
-  /** A typical 1-minute range (price units) — the yardstick for "near" and for stops. */
+  /** A typical candle range on the trading horizon (price units) — the yardstick for "near", stops and targets. */
   typicalMove: number
   /** Absorption $ in the recent window: buyers = bids that held against selling. */
   absorbBuyers: number
@@ -154,10 +156,10 @@ export function scoreFactors(i: AdvisorInput): Factor[] {
   return f
 }
 
-function nearest(levels: AdvisorLevel[], price: number, where: 'above' | 'below'): AdvisorLevel | null {
+function nearest(levels: AdvisorLevel[], price: number, where: 'above' | 'below', minDist = 0): AdvisorLevel | null {
   let best: AdvisorLevel | null = null
   for (const l of levels) {
-    if (where === 'above' ? l.price <= price : l.price >= price) continue
+    if (where === 'above' ? l.price <= price + minDist : l.price >= price - minDist) continue
     if (!best || Math.abs(l.price - price) < Math.abs(best.price - price)) best = l
   }
   return best
@@ -168,7 +170,8 @@ export function makePlan(i: AdvisorInput, bias: 'long' | 'short'): Plan {
   const tm = i.typicalMove || i.price * 0.0005
   const long = bias === 'long'
   const zoneLevel = nearest(long ? i.supports : i.resistances, i.price, long ? 'below' : 'above')
-  const targetLevel = nearest(long ? i.resistances : i.supports, i.price, long ? 'above' : 'below')
+  // a level inside half a typical move is noise at this horizon: aim for the next one out
+  const targetLevel = nearest(long ? i.resistances : i.supports, i.price, long ? 'above' : 'below', 0.5 * tm)
   // no confirmed level close by: work from price itself
   const useLevel = zoneLevel !== null && Math.abs(zoneLevel.price - i.price) <= 3 * tm
   const anchor = useLevel ? zoneLevel.price : i.price
@@ -193,7 +196,8 @@ export function advise(i: AdvisorInput): Advice {
 
   const cautions: string[] = []
   if (i.stale) cautions.push('Feed is stale — wait for live data')
-  if (i.watchedMs < WARMUP_MS) cautions.push(`Still reading the book (${Math.ceil((WARMUP_MS - i.watchedMs) / 60_000)} min to go)`)
+  const warmup = i.warmupMs ?? WARMUP_MS
+  if (i.watchedMs < warmup) cautions.push(`Still reading the book (${Math.ceil((warmup - i.watchedMs) / 60_000)} min to go)`)
   if (i.sweeps.some((s) => i.now - s.t < 30_000)) cautions.push('Stops were just swept — let it settle')
   if (strongUp && strongDown) cautions.push('Strong signals on both sides — conflicted')
 
@@ -231,7 +235,7 @@ export interface AdvisorCall {
  */
 export class AdvisorRecord {
   readonly calls: AdvisorCall[] = []
-  constructor(private expireMs = 30 * 60_000) {}
+  constructor(public expireMs = 30 * 60_000) {}
 
   open(t: number, bias: 'long' | 'short', price: number, plan: Plan): void {
     const last = this.calls[this.calls.length - 1]
