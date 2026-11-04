@@ -90,7 +90,57 @@ export interface UltraV2Options {
   showSupertrendDown: boolean
   atrPeriod: number
   atrFactor: number
+  // ---- Style (every colour is a #rrggbb hex) ----
+  vwapColor: string
+  vwapWidth: number
+  band1Color: string
+  band2Color: string
+  band3Color: string
+  bandWidth: number
+  /** Source: each band pair is filled at 95% transparency. */
+  vwapBandFill: boolean
+  vwapBandFillOpacity: number
+  ibHighColor: string
+  ibLowColor: string
+  ibMidColor: string
+  ibAreaColor: string
+  ibAreaOpacity: number
+  ibLineWidth: number
+  ibMainStyle: LineStyle
+  ibExtStyle: LineStyle
+  ibIntStyle: LineStyle
+  /** Source's "Show labels": IBH 100% / IBL 0% / IBM 50% / x2 / x3 tags. */
+  ibLabels: boolean
+  /** Source's "Initial balance window coloration" (tints the bars inside the IB window). */
+  ibWindowShade: boolean
+  svpBarColor: string
+  svpValueAreaColor: string
+  svpBarOpacity: number
+  svpBackgroundColor: string
+  svpBackgroundOpacity: number
+  /** Histogram width, % of the chart width (source: "Profile Width %" of the session). */
+  svpWidthPct: number
+  /** Row height % (source: "Height % per Row"). */
+  svpRowHeightPct: number
+  pocColor: string
+  pocWidth: number
+  vahColor: string
+  valColor: string
+  svpLabels: boolean
+  bosUpColor: string
+  bosDownColor: string
+  bosWidth: number
+  bosStyle: LineStyle
+  stUpColor: string
+  stDownColor: string
+  stWidth: number
+  /** Source: fills between the candle-body middle and the Supertrend line at 90% transparency. */
+  stFill: boolean
+  stFillOpacity: number
 }
+
+export type LineStyle = 'solid' | 'dashed' | 'dotted'
+const DASH: Record<LineStyle, number[]> = { solid: [], dashed: [5, 4], dotted: [1.5, 3] }
 
 export const ULTRA_V2_DEFAULTS: UltraV2Options = {
   showVwap: true,
@@ -127,7 +177,53 @@ export const ULTRA_V2_DEFAULTS: UltraV2Options = {
   showSupertrendDown: true,
   atrPeriod: 2,
   atrFactor: 2,
+  vwapColor: '#2962FF',
+  vwapWidth: 1.5,
+  band1Color: '#26a69a',
+  band2Color: '#8d8d00',
+  band3Color: '#00897b',
+  bandWidth: 1,
+  vwapBandFill: true,
+  vwapBandFillOpacity: 0.05,
+  ibHighColor: '#26a69a',
+  ibLowColor: '#ef5350',
+  ibMidColor: '#ffa726',
+  ibAreaColor: '#b8851f',
+  ibAreaOpacity: 0.35,
+  ibLineWidth: 1,
+  ibMainStyle: 'solid',
+  ibExtStyle: 'dashed',
+  ibIntStyle: 'dotted',
+  ibLabels: true,
+  ibWindowShade: false,
+  svpBarColor: '#787b86',
+  svpValueAreaColor: '#9598a1',
+  svpBarOpacity: 0.5,
+  svpBackgroundColor: '#2962FF',
+  svpBackgroundOpacity: 0.08,
+  svpWidthPct: 25,
+  svpRowHeightPct: 68,
+  pocColor: '#ffc107',
+  pocWidth: 2,
+  vahColor: '#2962FF',
+  valColor: '#2962FF',
+  svpLabels: true,
+  bosUpColor: '#2962FF',
+  bosDownColor: '#ef5350',
+  bosWidth: 2,
+  bosStyle: 'solid',
+  stUpColor: '#26a69a',
+  stDownColor: '#ef5350',
+  stWidth: 2,
+  stFill: true,
+  stFillOpacity: 0.1,
 }
+
+const hexA = (hex: string, a: number): string => {
+  const v = parseInt((hex || '#000000').slice(1), 16)
+  return `rgba(${(v >> 16) & 255}, ${(v >> 8) & 255}, ${v & 255}, ${Math.max(0, Math.min(1, a))})`
+}
+const fmtLvl = (v: number): string => (Math.abs(v) >= 1000 ? v.toFixed(1) : Math.abs(v) >= 10 ? v.toFixed(2) : v.toPrecision(5))
 
 // ---------------------------------------------------------------------------
 // 1. VWAP + bands
@@ -496,6 +592,7 @@ export default class UltraV2Overlay {
   private candles: Candle[] = []
   private openHourUTC = 0 // trading-day open — see core/session.ts
   private lastSig = ''
+  private lastViewSig = ''
   private vwapSeries: VwapPoint[] = []
   private ibSessions: IBSession[] = []
   private svp: SvpResult | null = null
@@ -554,6 +651,7 @@ export default class UltraV2Overlay {
     this.canvas.style.width = `${rect.width}px`
     this.canvas.style.height = `${rect.height}px`
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    this.lastViewSig = ''
     this.dock.resize()
   }
 
@@ -572,6 +670,7 @@ export default class UltraV2Overlay {
   setOptions(opts: Partial<UltraV2Options>): void {
     this.opts = { ...this.opts, ...opts }
     this.lastSig = '' // recompute now, not on the next tick
+    this.lastViewSig = ''
     this.syncWidgetVisibility()
   }
 
@@ -662,9 +761,9 @@ export default class UltraV2Overlay {
     const fmt = (v: number): string => (isFinite(v) ? v.toFixed(4) : '—')
     this.widgetBody.innerHTML = ''
     const rows: [string, string, string][] = [
-      ['20D MAX', fmt(max), COLORS.ibHigh],
-      ['20D AVG', fmt(avg), COLORS.ibMid],
-      ['20D MIN', fmt(min), COLORS.ibLow],
+      ['20D MAX', fmt(max), this.opts.ibHighColor],
+      ['20D AVG', fmt(avg), this.opts.ibMidColor],
+      ['20D MIN', fmt(min), this.opts.ibLowColor],
       ['Today', fmt(delta), '#4361ee'],
       ['Status', status, '#d1d4dc'],
     ]
@@ -685,12 +784,18 @@ export default class UltraV2Overlay {
 
   private draw(): void {
     this.recompute()
+    const conv = this.engine.getMainConverters()
+    const rect = this.engine.getMainPaneRect()
+    // Skip the frame when neither the data nor the view moved (pan / zoom / resize / scale).
+    if (conv && rect && this.candles.length) {
+      const c0 = this.candles[0].time
+      const view = `${this.lastSig}|${rect.x},${rect.y},${rect.width},${rect.height}|${conv.timeToX(c0)}|${conv.timeToX(this.candles[this.candles.length - 1].time)}|${conv.priceToY(0)}|${conv.priceToY(1)}|${this.canvas.width}x${this.canvas.height}`
+      if (view === this.lastViewSig) return
+      this.lastViewSig = view
+    } else this.lastViewSig = ''
     const cw = this.canvas.width / (window.devicePixelRatio || 1)
     const ch = this.canvas.height / (window.devicePixelRatio || 1)
     this.ctx.clearRect(0, 0, cw, ch)
-
-    const conv = this.engine.getMainConverters()
-    const rect = this.engine.getMainPaneRect()
     if (!conv || !rect || this.candles.length === 0) return
 
     this.ctx.save()
@@ -713,32 +818,83 @@ export default class UltraV2Overlay {
     const series = this.vwapSeries
     if (series.length === 0) return
 
+    const o = this.opts
     const drawBandPair = (upperKey: keyof VwapPoint, lowerKey: keyof VwapPoint, color: string): void => {
+      if (o.vwapBandFill && o.vwapBandFillOpacity > 0) this.fillSeries(conv, rect, series, upperKey, lowerKey, hexA(color, o.vwapBandFillOpacity))
       ctx.strokeStyle = color
-      ctx.lineWidth = 1
-      ctx.globalAlpha = 0.7
+      ctx.lineWidth = o.bandWidth
+      ctx.globalAlpha = 0.85
       this.strokeSeries(conv, rect, series, upperKey)
       this.strokeSeries(conv, rect, series, lowerKey)
       ctx.globalAlpha = 1
     }
-    if (this.opts.showVwapBand3) drawBandPair('upper3', 'lower3', COLORS.band3)
-    if (this.opts.showVwapBand2) drawBandPair('upper2', 'lower2', COLORS.band2)
-    if (this.opts.showVwapBand1) drawBandPair('upper1', 'lower1', COLORS.band1)
+    if (o.showVwapBand3) drawBandPair('upper3', 'lower3', o.band3Color)
+    if (o.showVwapBand2) drawBandPair('upper2', 'lower2', o.band2Color)
+    if (o.showVwapBand1) drawBandPair('upper1', 'lower1', o.band1Color)
 
-    if (this.opts.showVwapLine) {
-      ctx.strokeStyle = COLORS.vwap
-      ctx.lineWidth = 1.5
+    if (o.showVwapLine) {
+      ctx.strokeStyle = o.vwapColor
+      ctx.lineWidth = o.vwapWidth
       this.strokeSeries(conv, rect, series, 'vwap')
     }
+  }
+
+  /** [from, to] indices of `series` (time-ascending) on screen, one point of margin each side. */
+  private visible(conv: Converters, rect: Rect, times: { time: number }[]): [number, number] {
+    const n = times.length
+    if (!n) return [0, -1]
+    const t0 = conv.xToTime(rect.x)
+    const t1 = conv.xToTime(rect.x + rect.width)
+    const lower = (t: number): number => {
+      let a = 0
+      let b = n
+      while (a < b) {
+        const m = (a + b) >> 1
+        if (times[m].time < t) a = m + 1
+        else b = m
+      }
+      return a
+    }
+    return [Math.max(0, lower(Math.min(t0, t1)) - 1), Math.min(n - 1, lower(Math.max(t0, t1)) + 1)]
+  }
+
+  /** Fill between two VWAP-series keys over the visible points (split at session resets). */
+  private fillSeries(conv: Converters, rect: Rect, series: VwapPoint[], a: keyof VwapPoint, b: keyof VwapPoint, fill: string): void {
+    const ctx = this.ctx
+    const [from, to] = this.visible(conv, rect, series)
+    ctx.fillStyle = fill
+    let seg: VwapPoint[] = []
+    const flush = (): void => {
+      if (seg.length > 1) {
+        ctx.beginPath()
+        seg.forEach((p, k) => (k ? ctx.lineTo : ctx.moveTo).call(ctx, conv.timeToX(p.time), conv.priceToY(p[a] as number)))
+        for (let k = seg.length - 1; k >= 0; k--) ctx.lineTo(conv.timeToX(seg[k].time), conv.priceToY(seg[k][b] as number))
+        ctx.closePath()
+        ctx.fill()
+      }
+      seg = []
+    }
+    let day = NaN
+    for (let i = from; i <= to; i++) {
+      const p = series[i]
+      const d = sessionIndex(p.time, this.openHourUTC)
+      if (d !== day) {
+        flush()
+        day = d
+      }
+      seg.push(p)
+    }
+    flush()
   }
 
   private strokeSeries(conv: Converters, rect: Rect, series: VwapPoint[], key: keyof VwapPoint): void {
     const ctx = this.ctx
     ctx.beginPath()
     let started = false
-    for (const p of series) {
+    const [from, to] = this.visible(conv, rect, series)
+    for (let i = from; i <= to; i++) {
+      const p = series[i]
       const x = conv.timeToX(p.time)
-      if (x < rect.x - 20 || x > rect.x + rect.width + 20) continue
       const v = p[key] as number
       if (!isFinite(v)) continue
       const y = conv.priceToY(v)
@@ -757,6 +913,17 @@ export default class UltraV2Overlay {
     if (sessions.length === 0) return
     const lastCandleTime = this.candles[this.candles.length - 1].time
 
+    const o = this.opts
+    // Source's "Initial balance window coloration": tint the bars inside each IB window.
+    if (o.ibWindowShade) {
+      ctx.fillStyle = 'rgba(156, 39, 176, 0.2)'
+      for (const s of sessions) {
+        const x1 = conv.timeToX(s.startTime)
+        const x2 = conv.timeToX(Math.min(s.windowEndTime, s.lastTime))
+        if (x2 < rect.x || x1 > rect.x + rect.width) continue
+        ctx.fillRect(x1, rect.y, Math.max(1, x2 - x1), rect.height)
+      }
+    }
     // Historical + live boxes (accumulate, matching the source's default).
     for (const s of sessions) {
       if (s.done ? !this.opts.showIBBoxes : !this.opts.showIBLiveBox) continue
@@ -765,7 +932,7 @@ export default class UltraV2Overlay {
       if (x2 < rect.x || x1 > rect.x + rect.width) continue
       const y1 = conv.priceToY(s.high)
       const y2 = conv.priceToY(s.low)
-      ctx.fillStyle = s.done ? COLORS.ibArea : 'rgba(184,133,31,0.18)'
+      ctx.fillStyle = hexA(o.ibAreaColor, s.done ? o.ibAreaOpacity : o.ibAreaOpacity / 2)
       ctx.fillRect(Math.max(x1, rect.x), y1, Math.min(x2, rect.x + rect.width) - Math.max(x1, rect.x), y2 - y1)
     }
 
@@ -780,33 +947,40 @@ export default class UltraV2Overlay {
     const x2 = Math.min(conv.timeToX(lastCandleTime), rect.x + rect.width)
     if (x2 < x1) return
 
-    const level = (price: number, color: string): void => {
-      const y = conv.priceToY(price)
+    ctx.font = '600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    ctx.textBaseline = 'bottom'
+    ctx.textAlign = 'left'
+    const level = (price: number, color: string, style: LineStyle, tag: string): void => {
+      const y = Math.round(conv.priceToY(price)) + 0.5
+      if (y < rect.y - 2 || y > rect.y + rect.height + 2) return
       ctx.strokeStyle = color
-      ctx.lineWidth = 1
+      ctx.lineWidth = o.ibLineWidth
+      ctx.setLineDash(DASH[style] ?? [])
       ctx.beginPath()
       ctx.moveTo(x1, y)
       ctx.lineTo(x2, y)
       ctx.stroke()
-    }
-    if (this.opts.showIBHighLow) {
-      level(h, COLORS.ibHigh)
-      level(l, COLORS.ibLow)
-    }
-    if (this.opts.showIBIntermediateLevels) level(m, COLORS.ibMid)
-    if (this.opts.showIBExtraLevels) {
-      ctx.setLineDash([4, 3])
-      level(h + d, COLORS.ibHigh)
-      level(l - d, COLORS.ibLow)
-      level(h + d * 2, COLORS.ibHigh)
-      level(l - d * 2, COLORS.ibLow)
-      if (this.opts.showIBIntermediateLevels) {
-        ctx.setLineDash([2, 2])
-        level(h + d / 2, COLORS.ibMid)
-        level(l - d / 2, COLORS.ibMid)
+      if (o.ibLabels) {
+        ctx.fillStyle = color
+        ctx.fillText(`${tag}: ${fmtLvl(price)}`, x1 + 4, y - 2)
       }
-      ctx.setLineDash([])
     }
+    if (o.showIBHighLow) {
+      level(h, o.ibHighColor, o.ibMainStyle, 'IBH 100%')
+      level(l, o.ibLowColor, o.ibMainStyle, 'IBL 0%')
+    }
+    if (o.showIBIntermediateLevels) level(m, o.ibMidColor, o.ibIntStyle, `IBM 50% · IBΔ ${fmtLvl(d)}`)
+    if (o.showIBExtraLevels) {
+      level(h + d, o.ibHighColor, o.ibExtStyle, 'IBH x2')
+      level(l - d, o.ibLowColor, o.ibExtStyle, 'IBL x2')
+      level(h + d * 2, o.ibHighColor, o.ibExtStyle, 'IBH x3')
+      level(l - d * 2, o.ibLowColor, o.ibExtStyle, 'IBL x3')
+      if (o.showIBIntermediateLevels) {
+        level(h + d / 2, o.ibMidColor, o.ibIntStyle, 'IBH +50%')
+        level(l - d / 2, o.ibMidColor, o.ibIntStyle, 'IBL −50%')
+      }
+    }
+    ctx.setLineDash([])
   }
 
   // ---- Session Volume Profile ----
@@ -815,14 +989,15 @@ export default class UltraV2Overlay {
     if (!svp) return
     const ctx = this.ctx
     const x0 = Math.max(conv.timeToX(svp.startTime), rect.x)
-    const maxWidth = Math.min(160, rect.width * 0.25)
+    const o = this.opts
+    const maxWidth = rect.width * Math.max(0.05, Math.min(0.9, o.svpWidthPct / 100))
     const maxVol = Math.max(...svp.bins, 1e-9)
 
     // Value-area background tint.
     const vahY = conv.priceToY(svp.loPrice + (svp.vahBin + 1) * svp.step)
     const valY = conv.priceToY(svp.loPrice + svp.valBin * svp.step)
     if (this.opts.showSvpValueAreaFill) {
-      ctx.fillStyle = COLORS.svpBackground
+      ctx.fillStyle = hexA(o.svpBackgroundColor, o.svpBackgroundOpacity)
       ctx.fillRect(x0, vahY, rect.x + rect.width - x0, valY - vahY)
     }
 
@@ -835,11 +1010,16 @@ export default class UltraV2Overlay {
       const yTop = conv.priceToY(svp.loPrice + (b + 1) * svp.step)
       const yBottom = conv.priceToY(svp.loPrice + b * svp.step)
       const inValueArea = b >= svp.valBin && b <= svp.vahBin
-      ctx.fillStyle = inValueArea ? COLORS.svpValueArea : COLORS.svpBar
-      ctx.fillRect(x0, yTop + 1, barW, Math.max(1, yBottom - yTop - 2))
+      ctx.fillStyle = inValueArea ? hexA(o.svpValueAreaColor, Math.min(1, o.svpBarOpacity * 1.5)) : hexA(o.svpBarColor, o.svpBarOpacity)
+      const rowH = Math.abs(yBottom - yTop)
+      const hh = Math.max(1, (rowH * Math.max(1, Math.min(100, o.svpRowHeightPct))) / 100)
+      ctx.fillRect(x0, yTop + (rowH - hh) / 2, barW, hh)
     }
 
-    const line = (price: number, color: string, width: number): void => {
+    ctx.font = '600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    ctx.textBaseline = 'middle'
+    ctx.textAlign = 'right'
+    const line = (price: number, color: string, width: number, tag: string): void => {
       const y = conv.priceToY(price)
       ctx.strokeStyle = color
       ctx.lineWidth = width
@@ -847,11 +1027,15 @@ export default class UltraV2Overlay {
       ctx.moveTo(x0, y)
       ctx.lineTo(rect.x + rect.width, y)
       ctx.stroke()
+      if (o.svpLabels && x0 - 4 > rect.x + 20) {
+        ctx.fillStyle = color
+        ctx.fillText(tag, x0 - 4, y)
+      }
     }
-    if (this.opts.showPoc) line(svp.loPrice + (svp.pocBin + 0.5) * svp.step, COLORS.poc, 2)
-    if (this.opts.showVahVal) {
-      line(svp.loPrice + (svp.vahBin + 1) * svp.step, COLORS.vah, 1)
-      line(svp.loPrice + svp.valBin * svp.step, COLORS.val, 1)
+    if (o.showPoc) line(svp.loPrice + (svp.pocBin + 0.5) * svp.step, o.pocColor, o.pocWidth, 'POC')
+    if (o.showVahVal) {
+      line(svp.loPrice + (svp.vahBin + 1) * svp.step, o.vahColor, 1, 'VAH')
+      line(svp.loPrice + svp.valBin * svp.step, o.valColor, 1, 'VAL')
     }
   }
 
@@ -898,13 +1082,15 @@ export default class UltraV2Overlay {
       const x2 = conv.timeToX(b.x2)
       if (x2 < rect.x - 5 || x1 > rect.x + rect.width + 5) continue
       const y = conv.priceToY(b.y)
-      ctx.strokeStyle = b.up ? COLORS.bosUp : COLORS.bosDown
-      ctx.lineWidth = 2
+      ctx.strokeStyle = b.up ? this.opts.bosUpColor : this.opts.bosDownColor
+      ctx.lineWidth = this.opts.bosWidth
+      ctx.setLineDash(DASH[this.opts.bosStyle] ?? [])
       ctx.beginPath()
       ctx.moveTo(Math.max(x1, rect.x), y)
       ctx.lineTo(Math.min(x2, rect.x + rect.width), y)
       ctx.stroke()
     }
+    ctx.setLineDash([])
   }
 
   // ---- Supertrend ----
@@ -912,19 +1098,52 @@ export default class UltraV2Overlay {
     const ctx = this.ctx
     const series = this.supertrend
     if (series.length === 0) return
+    const o = this.opts
+    const [from, to] = this.visible(conv, rect, series)
+    // Source: fill between the candle-body middle and the trend line, per trend leg.
+    if (o.stFill && o.stFillOpacity > 0) {
+      const candles = this.candles
+      let seg: number[] = []
+      let segUp = true
+      const flush = (): void => {
+        if (seg.length > 1 && (segUp ? o.showSupertrendUp : o.showSupertrendDown)) {
+          ctx.fillStyle = hexA(segUp ? o.stUpColor : o.stDownColor, o.stFillOpacity)
+          ctx.beginPath()
+          seg.forEach((i, k) => (k ? ctx.lineTo : ctx.moveTo).call(ctx, conv.timeToX(series[i].time), conv.priceToY(series[i].value)))
+          for (let k = seg.length - 1; k >= 0; k--) {
+            const c = candles[seg[k]]
+            ctx.lineTo(conv.timeToX(c.time), conv.priceToY((c.open + c.close) / 2))
+          }
+          ctx.closePath()
+          ctx.fill()
+        }
+        seg = []
+      }
+      for (let i = from; i <= to; i++) {
+        const p = series[i]
+        if (!isFinite(p.value) || !candles[i] || candles[i].time !== p.time) {
+          flush()
+          continue
+        }
+        if (seg.length && p.up !== segUp) flush()
+        segUp = p.up
+        seg.push(i)
+      }
+      flush()
+    }
     let started = false
-    let curUp = series[0]?.up ?? true
-    ctx.lineWidth = 2
-    ctx.strokeStyle = curUp ? COLORS.stUp : COLORS.stDown
+    let curUp = series[from]?.up ?? true
+    ctx.lineWidth = o.stWidth
+    ctx.strokeStyle = curUp ? o.stUpColor : o.stDownColor
     ctx.beginPath()
-    for (const p of series) {
+    for (let i = from; i <= to; i++) {
+      const p = series[i]
       if (!isFinite(p.value)) continue
       const x = conv.timeToX(p.time)
-      if (x < rect.x - 20 || x > rect.x + rect.width + 20) continue
       if (p.up !== curUp) {
         if (started) ctx.stroke()
         curUp = p.up
-        ctx.strokeStyle = curUp ? COLORS.stUp : COLORS.stDown
+        ctx.strokeStyle = curUp ? o.stUpColor : o.stDownColor
         ctx.beginPath()
         started = false
       }

@@ -33,6 +33,8 @@ import { flyingCpr, computeFlyingCprModel, drawFlyingCpr, type FlyingCprModel } 
 import { tpoFade, computeTpoFadeModel, drawTpoFade, tpoFadeTrades, type TpoFadeModel } from './tpoFade'
 import { tpoTv, computeTpoTvModel, drawTpoTv, type TpoTvModel } from './tpoTv'
 import { fvgMid, computeFvgMidModel, drawFvgMid, type FvgMidModel } from './fvgMid'
+import { vwapEmaAngle, computeVwapEmaAngleModel, drawVwapEmaAngle, type VwapEmaAngleModel } from './vwapEmaAngle'
+import { dcCprBb, computeDcCprBbModel, drawDcCprBb, type DcCprBbModel } from './dcCprBb'
 import { computeVortex } from '../../src/overlays/vortexModel'
 
 // ---- Pine-style helpers (ta.*) ----
@@ -1420,7 +1422,7 @@ function salaarSignals(candles: Candle[], params: Record<string, number>): Signa
  *  leg a full recompute would find, silently freezing the plotted levels.
  *  See lionPivots/lionFindLeg above: the swing search needs pivots from the
  *  full loaded history, not just the last `warmupBars` candles. */
-export const FULL_HISTORY_INDICATOR_IDS = new Set<string>([lionIndicator.id, shadow1sc.id, zigzagFib.id, sessionReversal.id, rangeBreakout.id, renkoFade.id, sessionsIndicator.id, marketStructure.id, mtfCisd.id, hlBlocks.id, aiTrades.id, bulbArrow.id, flyingCpr.id, tpoFade.id, fvgMid.id, tpoTv.id])
+export const FULL_HISTORY_INDICATOR_IDS = new Set<string>([lionIndicator.id, shadow1sc.id, zigzagFib.id, sessionReversal.id, rangeBreakout.id, renkoFade.id, sessionsIndicator.id, marketStructure.id, mtfCisd.id, hlBlocks.id, aiTrades.id, bulbArrow.id, flyingCpr.id, tpoFade.id, fvgMid.id, tpoTv.id, vwapEmaAngle.id, dcCprBb.id])
 
 const SIGNAL_SOURCES: Record<string, (candles: Candle[], params: Record<string, number>) => Signal[]> = {
   [chotaPanditV3.id]: chotaSignals,
@@ -1539,6 +1541,14 @@ const CANVAS_SOURCES: Record<string, CanvasSource> = {
     compute: computeTpoTvModel,
     draw: (g, conv, rect, candles, model, ctx) => drawTpoTv(g, conv, rect, candles, model as TpoTvModel, ctx),
   },
+  [vwapEmaAngle.id]: {
+    compute: computeVwapEmaAngleModel,
+    draw: (g, conv, rect, candles, model, ctx) => drawVwapEmaAngle(g, conv, rect, candles, model as VwapEmaAngleModel, ctx),
+  },
+  [dcCprBb.id]: {
+    compute: computeDcCprBbModel,
+    draw: (g, conv, rect, candles, model, ctx) => drawDcCprBb(g, conv, rect, candles, model as DcCprBbModel, ctx),
+  },
 }
 
 /** The canvas renderer for an indicator id, if it has one. */
@@ -1585,6 +1595,8 @@ export const CUSTOM_INDICATORS: IndicatorDef[] = [
   tpoFade,
   fvgMid,
   tpoTv,
+  vwapEmaAngle,
+  dcCprBb,
   vortex,
 ]
 

@@ -119,15 +119,23 @@ const UNIT_LABEL: Record<string, string> = { s: 'Seconds', m: 'Minutes', h: 'Hou
 const DEMO_INTERVALS: Interval[] = INTERVALS.filter((iv) => iv !== '1s')
 const LS_KEY = 'candl.layouts'
 
+/**
+ * `?clean=1` (the marketing site's "Try charts") opens a bare candle chart:
+ * no indicators, no volume, no on-chart flow overlays, ignoring the saved
+ * workspace. The flag is read once at load and stripped from the URL, so a
+ * refresh afterwards restores whatever the visitor built.
+ */
+const CLEAN_START = new URLSearchParams(location.search).get('clean') === '1'
+
 function defaultPaneState(i: number): PaneState {
   return {
     symbol: DEFAULT_SYMBOLS[i % DEFAULT_SYMBOLS.length],
     interval: '1m',
     chartType: 'candles',
-    indicators: [defaultIndicatorInstance('volume')],
+    indicators: CLEAN_START ? [] : [defaultIndicatorInstance('volume')],
     drawings: [],
-    tradeRain: true,
-    buySellPoll: true,
+    tradeRain: !CLEAN_START,
+    buySellPoll: !CLEAN_START,
   }
 }
 
@@ -1711,62 +1719,130 @@ function openFlagPatternsSettings(p: ChartPane): void {
 }
 
 function openUltraV2Settings(p: ChartPane): void {
-  const opts = p.getUltraV2Options()
-  const { backdrop, modal, close } = openModal('Ultra V2')
   const set = (patch: Partial<UltraV2Options>): void => p.applyUltraV2Option(patch)
-  const check = (label: string, key: keyof UltraV2Options): void => {
-    modalCheckField(modal, label, opts[key] as boolean, (v) => set({ [key]: v }))
+  type O = UltraV2Options
+  const styles: [string, string][] = [
+    ['solid', 'Solid'],
+    ['dashed', 'Dashed'],
+    ['dotted', 'Dotted'],
+  ]
+  // every tab rebuilds from the current options, so switching tabs never shows stale values
+  const tab = (label: string, build: (body: HTMLElement, o: O, check: (label: string, key: keyof O) => void, color: (label: string, key: keyof O) => void, pct: (label: string, key: keyof O, max?: number) => void) => void) => ({
+    label,
+    build: (body: HTMLElement) => {
+      const o = p.getUltraV2Options()
+      const check = (l: string, key: keyof O): void => {
+        modalCheckField(body, l, o[key] as boolean, (v) => set({ [key]: v }))
+      }
+      const color = (l: string, key: keyof O): void => modalColorField(body, l, o[key] as string, (v) => set({ [key]: v }))
+      const pct = (l: string, key: keyof O, max = 100): void => {
+        modalNumField(body, l, Math.round((o[key] as number) * 100), 0, max, 1, (v) => set({ [key]: v / 100 }))
+      }
+      build(body, o, check, color, pct)
+    },
+  })
+  const head = (body: HTMLElement, text: string): void => {
+    body.appendChild(el('div', { class: 'modal-head' }, text))
   }
-
-  modal.appendChild(el('div', { class: 'modal-head' }, 'VWAP'))
-  check('Show VWAP', 'showVwap')
-  check('VWAP line', 'showVwapLine')
-  modalSelectField(modal, 'Bands mode', opts.vwapBandsMode, [
-    ['stdev', 'Standard deviation'],
-    ['pct', 'Percentage'],
-  ], (v) => set({ vwapBandsMode: v as UltraV2Options['vwapBandsMode'] }))
-  check('Band #1', 'showVwapBand1')
-  modalNumField(modal, 'Band #1 multiplier', opts.vwapBand1Mult, 0.1, 10, 0.1, (v) => set({ vwapBand1Mult: v }))
-  check('Band #2', 'showVwapBand2')
-  modalNumField(modal, 'Band #2 multiplier', opts.vwapBand2Mult, 0.1, 10, 0.1, (v) => set({ vwapBand2Mult: v }))
-  check('Band #3', 'showVwapBand3')
-  modalNumField(modal, 'Band #3 multiplier', opts.vwapBand3Mult, 0.1, 10, 0.1, (v) => set({ vwapBand3Mult: v }))
-
-  modal.appendChild(el('div', { class: 'modal-head' }, 'Initial Balance'))
-  check('Show Initial Balance', 'showIB')
-  modalNumField(modal, 'IB window (minutes)', opts.ibMinutes, 5, 480, 5, (v) => set({ ibMinutes: v }))
-  check('Completed IB boxes', 'showIBBoxes')
-  check('Live (forming) IB box', 'showIBLiveBox')
-  check('IB high / low lines', 'showIBHighLow')
-  check('Extension levels (x2 / x3)', 'showIBExtraLevels')
-  check('Intermediate levels (50%)', 'showIBIntermediateLevels')
-  check('IB delta table', 'showIBDeltaTable')
-
-  modal.appendChild(el('div', { class: 'modal-head' }, 'Session Volume Profile'))
-  check('Show Session Volume Profile', 'showSVP')
-  check('Histogram', 'showSvpHistogram')
-  check('Value-area shading', 'showSvpValueAreaFill')
-  check('POC line', 'showPoc')
-  check('VAH / VAL lines', 'showVahVal')
-  check('Demand / supply zones', 'showSvpZones')
-  modalNumField(modal, 'Zone threshold (% of POC volume)', opts.svpZoneThresholdPct, 10, 100, 5, (v) => set({ svpZoneThresholdPct: v }))
-  modalNumField(modal, 'Rows', opts.svpRows, 5, 200, 1, (v) => set({ svpRows: Math.round(v) }))
-  modalNumField(modal, 'Value area (%)', Math.round(opts.svpValueAreaPct * 100), 10, 100, 1, (v) => set({ svpValueAreaPct: v / 100 }))
-
-  modal.appendChild(el('div', { class: 'modal-head' }, 'TJR BOS 2.0'))
-  check('Show BOS', 'showBOS')
-  check('Bullish breaks', 'showBosUp')
-  check('Bearish breaks', 'showBosDown')
-
-  modal.appendChild(el('div', { class: 'modal-head' }, 'Supertrend'))
-  check('Show Supertrend', 'showSupertrend')
-  check('Uptrend line', 'showSupertrendUp')
-  check('Downtrend line', 'showSupertrendDown')
-  modalNumField(modal, 'ATR period', opts.atrPeriod, 1, 100, 1, (v) => set({ atrPeriod: Math.round(v) }))
-  modalNumField(modal, 'Factor', opts.atrFactor, 0.1, 20, 0.1, (v) => set({ atrFactor: v }))
-
-  modalDoneFoot(modal, close)
-  document.body.appendChild(backdrop)
+  openTabbedModal(
+    'Ultra V2',
+    'VWAP + Initial Balance (1st hour) + Session Volume Profile + TJR BOS 2.0 + Supertrend in one overlay. Every part has its own switch, colours and line styles.',
+    [
+      tab('VWAP', (body, o, check, color, pct) => {
+        head(body, 'Inputs')
+        check('Show VWAP', 'showVwap')
+        check('VWAP line', 'showVwapLine')
+        modalSelectField(body, 'Bands mode', o.vwapBandsMode, [
+          ['stdev', 'Standard deviation'],
+          ['pct', 'Percentage'],
+        ], (v) => set({ vwapBandsMode: v as O['vwapBandsMode'] }))
+        check('Band #1', 'showVwapBand1')
+        modalNumField(body, 'Band #1 multiplier', o.vwapBand1Mult, 0.1, 10, 0.1, (v) => set({ vwapBand1Mult: v }))
+        check('Band #2', 'showVwapBand2')
+        modalNumField(body, 'Band #2 multiplier', o.vwapBand2Mult, 0.1, 10, 0.1, (v) => set({ vwapBand2Mult: v }))
+        check('Band #3', 'showVwapBand3')
+        modalNumField(body, 'Band #3 multiplier', o.vwapBand3Mult, 0.1, 10, 0.1, (v) => set({ vwapBand3Mult: v }))
+        head(body, 'Style')
+        color('VWAP colour', 'vwapColor')
+        modalNumField(body, 'VWAP width', o.vwapWidth, 0.5, 6, 0.5, (v) => set({ vwapWidth: v }))
+        color('Band #1 colour', 'band1Color')
+        color('Band #2 colour', 'band2Color')
+        color('Band #3 colour', 'band3Color')
+        modalNumField(body, 'Band width', o.bandWidth, 0.5, 6, 0.5, (v) => set({ bandWidth: v }))
+        check('Fill between bands', 'vwapBandFill')
+        pct('Band fill opacity %', 'vwapBandFillOpacity', 60)
+      }),
+      tab('Initial Balance', (body, o, check, color, pct) => {
+        head(body, 'Inputs')
+        check('Show Initial Balance', 'showIB')
+        modalNumField(body, 'IB window (minutes)', o.ibMinutes, 5, 480, 5, (v) => set({ ibMinutes: v }))
+        check('Completed IB boxes', 'showIBBoxes')
+        check('Live (forming) IB box', 'showIBLiveBox')
+        check('IB high / low lines', 'showIBHighLow')
+        check('Extension levels (x2 / x3)', 'showIBExtraLevels')
+        check('Intermediate levels (50%)', 'showIBIntermediateLevels')
+        check('Level labels', 'ibLabels')
+        check('Shade the IB window', 'ibWindowShade')
+        check('IB delta table', 'showIBDeltaTable')
+        head(body, 'Style')
+        color('High levels colour', 'ibHighColor')
+        color('Low levels colour', 'ibLowColor')
+        color('50% levels colour', 'ibMidColor')
+        color('IB area colour', 'ibAreaColor')
+        pct('IB area opacity %', 'ibAreaOpacity')
+        modalNumField(body, 'Level width', o.ibLineWidth, 0.5, 6, 0.5, (v) => set({ ibLineWidth: v }))
+        modalSelectField(body, 'Main levels style', o.ibMainStyle, styles, (v) => set({ ibMainStyle: v as O['ibMainStyle'] }))
+        modalSelectField(body, 'Extension levels style', o.ibExtStyle, styles, (v) => set({ ibExtStyle: v as O['ibExtStyle'] }))
+        modalSelectField(body, 'Intermediate levels style', o.ibIntStyle, styles, (v) => set({ ibIntStyle: v as O['ibIntStyle'] }))
+      }),
+      tab('Volume Profile', (body, o, check, color, pct) => {
+        head(body, 'Inputs')
+        check('Show Session Volume Profile', 'showSVP')
+        check('Histogram', 'showSvpHistogram')
+        check('Value-area shading', 'showSvpValueAreaFill')
+        check('POC line', 'showPoc')
+        check('VAH / VAL lines', 'showVahVal')
+        check('POC / VAH / VAL labels', 'svpLabels')
+        check('Demand / supply zones', 'showSvpZones')
+        modalNumField(body, 'Zone threshold (% of POC volume)', o.svpZoneThresholdPct, 10, 100, 5, (v) => set({ svpZoneThresholdPct: v }))
+        modalNumField(body, 'Rows', o.svpRows, 5, 200, 1, (v) => set({ svpRows: Math.round(v) }))
+        pct('Value area (%)', 'svpValueAreaPct')
+        head(body, 'Style')
+        modalNumField(body, 'Histogram width (% of chart)', o.svpWidthPct, 5, 90, 1, (v) => set({ svpWidthPct: v }))
+        modalNumField(body, 'Row height %', o.svpRowHeightPct, 1, 100, 1, (v) => set({ svpRowHeightPct: v }))
+        color('Histogram colour', 'svpBarColor')
+        color('Value-area rows colour', 'svpValueAreaColor')
+        pct('Histogram opacity %', 'svpBarOpacity')
+        color('Value-area background', 'svpBackgroundColor')
+        pct('Background opacity %', 'svpBackgroundOpacity', 60)
+        color('POC colour', 'pocColor')
+        modalNumField(body, 'POC width', o.pocWidth, 0.5, 6, 0.5, (v) => set({ pocWidth: v }))
+        color('VAH colour', 'vahColor')
+        color('VAL colour', 'valColor')
+      }),
+      tab('BOS & Supertrend', (body, o, check, color, pct) => {
+        head(body, 'TJR BOS 2.0')
+        check('Show BOS', 'showBOS')
+        check('Bullish breaks', 'showBosUp')
+        check('Bearish breaks', 'showBosDown')
+        color('Bullish colour', 'bosUpColor')
+        color('Bearish colour', 'bosDownColor')
+        modalNumField(body, 'Width', o.bosWidth, 0.5, 6, 0.5, (v) => set({ bosWidth: v }))
+        modalSelectField(body, 'Style', o.bosStyle, styles, (v) => set({ bosStyle: v as O['bosStyle'] }))
+        head(body, 'Supertrend')
+        check('Show Supertrend', 'showSupertrend')
+        check('Uptrend line', 'showSupertrendUp')
+        check('Downtrend line', 'showSupertrendDown')
+        modalNumField(body, 'ATR period', o.atrPeriod, 1, 100, 1, (v) => set({ atrPeriod: Math.round(v) }))
+        modalNumField(body, 'Factor', o.atrFactor, 0.1, 20, 0.1, (v) => set({ atrFactor: v }))
+        color('Uptrend colour', 'stUpColor')
+        color('Downtrend colour', 'stDownColor')
+        modalNumField(body, 'Width', o.stWidth, 0.5, 6, 0.5, (v) => set({ stWidth: v }))
+        check('Fill to the candle body', 'stFill')
+        pct('Fill opacity %', 'stFillOpacity', 60)
+      }),
+    ],
+  )
 }
 
 function openCprStrategySettings(p: ChartPane): void {
@@ -2854,6 +2930,7 @@ function buildBuddyToggle(): HTMLElement {
 /** A compact product mark keeps the workspace recognisable without spending
  *  chart real estate on a large application header. */
 function buildBrand(): HTMLElement {
+  // the ⚡ mark leads back to the site's home page
   const brand = el('div', { class: 'brand', title: '⚡Charts' })
   brand.append(el('span', { class: 'brand-mark' }, '⚡'))
   return brand
@@ -3472,7 +3549,7 @@ function persistSession(): void {
 function restoreSession(): void {
   let ok = false
   try {
-    const raw = localStorage.getItem(SESSION_KEY)
+    const raw = CLEAN_START ? null : localStorage.getItem(SESSION_KEY)
     if (raw) {
       const s = JSON.parse(raw) as SavedLayout & { mode?: 'charts' | 'options' }
       if (s && Array.isArray(s.panes) && s.panes.length) {
@@ -4452,6 +4529,12 @@ onAlertAudioBlocked(() => {
 
 restoreSession()
 applyDeepLink()
+if (CLEAN_START) {
+  if (chartSettings.volumeOverlay) updateChartSettings({ volumeOverlay: false })
+  const u = new URL(location.href)
+  u.searchParams.delete('clean')
+  history.replaceState(history.state, '', u.pathname + u.search + u.hash)
+}
 
 // Persist the workspace so a refresh restores it (not just on explicit Save).
 window.addEventListener('beforeunload', persistSession)
