@@ -54,6 +54,9 @@ export interface FootprintOptions {
   historyBars: number
   /** Paint bearish candles with positive delta, and bullish ones with negative delta, yellow. */
   divergenceCandles: boolean
+  /** BUY / SELL when the next candle closes beyond a divergence candle's high / low (alternating). */
+  breakLabels: boolean
+  breakAlerts: boolean
   /** Trade signals from the footprint (footprintSignalsModel.ts): plots, alerts, drawings. */
   signals: boolean
   sigAbsorb: boolean
@@ -88,6 +91,8 @@ export const FOOTPRINT_DEFAULTS: FootprintOptions = {
   showTotals: true,
   historyBars: 300,
   divergenceCandles: true,
+  breakLabels: true,
+  breakAlerts: true,
   signals: true,
   sigAbsorb: FP_SIGNAL_DEFAULTS.setups.absorb,
   sigTrap: FP_SIGNAL_DEFAULTS.setups.trap,
@@ -138,6 +143,40 @@ export function coveredBy(spans: [number, number][], t0: number, t1: number): bo
 /** A candle whose delta disagrees with its direction: down close on net buying, or up close on net selling. */
 export function isDeltaDivergence(open: number, close: number, delta: number): boolean {
   return (close < open && delta > 0) || (close > open && delta < 0)
+}
+
+export interface BreakLabel {
+  /** The candle that confirmed (the label sits on it, shown at its close). */
+  index: number
+  side: 1 | -1
+  /** The divergence candle it broke. */
+  trigger: number
+}
+
+/**
+ * Divergence breaks: a bearish candle with positive delta whose very next candle
+ * closes below its low → SELL on that next candle; a bullish candle with negative
+ * delta whose next candle closes above its high → BUY. Labels alternate: one that
+ * repeats the previous signal's side is not shown (so BUY, SELL, BUY …). Keeping a
+ * signal only when it differs from the previous one is the same as differing from
+ * the last label shown, so a label depends on the signal before it alone — never on
+ * where the loaded history starts. `delta(i)` is null when bar i has no exact trades.
+ */
+export function divergenceBreakLabels(bars: { open: number; high: number; low: number; close: number }[], delta: (i: number) => number | null, closedN = bars.length): BreakLabel[] {
+  const out: BreakLabel[] = []
+  let prevSide = 0
+  for (let j = 1; j < Math.min(closedN, bars.length); j++) {
+    const t = bars[j - 1], b = bars[j]
+    const d = delta(j - 1)
+    if (d === null) continue
+    let side: 0 | 1 | -1 = 0
+    if (t.close < t.open && d > 0 && b.close < t.low) side = -1
+    else if (t.close > t.open && d < 0 && b.close > t.high) side = 1
+    if (!side) continue
+    if (side !== prevSide) out.push({ index: j, side, trigger: j - 1 })
+    prevSide = side
+  }
+  return out
 }
 
 /** Fetches candles of `interval` ending before `endTime` (ms), newest last. */
@@ -224,6 +263,8 @@ function niceStep(x: number): number {
   return (m < 1.5 ? 1 : m < 2.25 ? 2 : m < 3.5 ? 2.5 : m < 7.5 ? 5 : 10) * p
 }
 
+const fmtPx = (v: number): string => v.toLocaleString('en-US', { maximumFractionDigits: v >= 1000 ? 2 : 4 })
+
 function fmt(v: number): string {
   const a = Math.abs(v)
   if (a >= 1e6) return (v / 1e6).toFixed(1) + 'M'
@@ -258,6 +299,10 @@ export default class FootprintOverlay {
   /** New footprint signals and exits (alerts, drawings) — set by the chart pane. */
   onSignal?: (e: FpSignalEvent, opts: FootprintOptions) => void
   private sigTimer = 0
+  /** New BUY / SELL divergence-break labels as they print — set by the chart pane. */
+  onBreakLabel?: (side: 1 | -1, text: string, opts: FootprintOptions) => void
+  private breaks: { key: string; labels: BreakLabel[]; times: number[] } = { key: '', labels: [], times: [] }
+  private breakSeen: number | null = null // time of the newest label already announced
   /** Where the recorded-tape history was loaded from (signals need their warm-up inside it). */
   private historyFrom = Infinity
   /** Current GEX Sabers levels for the symbol (empty: none / not loaded) — set by the chart pane. */
@@ -446,8 +491,80 @@ export default class FootprintOverlay {
     this.builtFor = ''
   }
 
+  /** Divergence-break labels over the closed bars, recomputed when the bars or trades change; new ones alerted. */
+  private updateBreaks(c: Candle[]): BreakLabel[] {
+    if (!this.opts.breakLabels || this.liveFrom === Infinity || c.length < 3 || !this.builtFor) return []
+    const now = Date.now()
+    const closedN = c[c.length - 1].time + this.barMsCache <= now ? c.length : c.length - 1
+    const key = `${this.builtFor}|${closedN}|${c[closedN - 1]?.time}|${this.trades.length}`
+    if (key !== this.breaks.key) {
+      const delta = (i: number): number | null => {
+        const k = c[i]
+        const rows = this.bars.get(k.time)
+        if (!rows || !this.isExact(k.time, k.time + this.barMsCache)) return null
+        let d = 0
+        for (const [b, s] of rows.values()) d += b - s
+        return d
+      }
+      const labels = divergenceBreakLabels(c, delta, closedN)
+      this.breaks = { key, labels, times: labels.map((l) => c[l.index].time) }
+      const newest = labels[labels.length - 1]
+      if (newest) {
+        const t = c[newest.index].time
+        // the first look is history; afterwards a label on the bar that just closed is news
+        if (this.breakSeen !== null && t > this.breakSeen && newest.index === closedN - 1 && this.opts.breakAlerts) {
+          const k = c[newest.index], trig = c[newest.trigger]
+          const text = newest.side > 0
+            ? `BUY — closed ${fmtPx(k.close)} above the high ${fmtPx(trig.high)} of a bullish candle with negative delta`
+            : `SELL — closed ${fmtPx(k.close)} below the low ${fmtPx(trig.low)} of a bearish candle with positive delta`
+          this.onBreakLabel?.(newest.side, text, this.opts)
+        }
+        this.breakSeen = Math.max(this.breakSeen ?? 0, t)
+      } else if (this.breakSeen === null) this.breakSeen = 0
+    }
+    return this.breaks.labels
+  }
+
+  private drawBreakLabels(c: Candle[], conv: { timeToX(t: number): number; priceToY(p: number): number }, rect: { x: number; width: number }, spacing: number): void {
+    const labels = this.updateBreaks(c)
+    if (!labels.length) return
+    const ctx = this.ctx
+    ctx.font = "700 10px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    for (const l of labels) {
+      const k = c[l.index]
+      const x = conv.timeToX(k.time)
+      if (x < rect.x - spacing || x > rect.x + rect.width + spacing) continue
+      const buy = l.side > 0
+      const text = buy ? 'BUY' : 'SELL'
+      const w = ctx.measureText(text).width + 10
+      const y = buy ? conv.priceToY(k.low) + 16 : conv.priceToY(k.high) - 16
+      ctx.fillStyle = buy ? '#089981' : '#f23645'
+      ctx.beginPath()
+      ctx.roundRect(x - w / 2, y - 8, w, 16, 3)
+      ctx.fill()
+      // a pointer at the candle
+      ctx.beginPath()
+      if (buy) {
+        ctx.moveTo(x, y - 13)
+        ctx.lineTo(x - 4, y - 8)
+        ctx.lineTo(x + 4, y - 8)
+      } else {
+        ctx.moveTo(x, y + 13)
+        ctx.lineTo(x - 4, y + 8)
+        ctx.lineTo(x + 4, y + 8)
+      }
+      ctx.fill()
+      ctx.fillStyle = '#fff'
+      ctx.fillText(text, x, y + 0.5)
+    }
+  }
+
   /** Read new signals / exits and hand them to onSignal (also on a timer: frames stop in a background tab). */
   private pollSignals(): void {
+    const c0 = this.getCandles()
+    if (c0.length >= 3 && this.builtFor) this.updateBreaks(c0)
     const c = this.getCandles()
     if (!this.opts.signals || this.liveFrom === Infinity || c.length < 3) return
     this.barMsCache = this.barMs(c)
@@ -554,6 +671,7 @@ export default class FootprintOverlay {
             : 'no history from the exchange — live trades only'
     ctx.fillText(`Footprint · row ${fmt(rs)} · ${src}`, rect.x + 8, rect.y + rect.height - 10)
     if (this.opts.divergenceCandles) this.drawDivergenceCandles(c, conv, rect, spacing)
+    if (this.opts.breakLabels) this.drawBreakLabels(c, conv, rect, spacing)
     const signals = (): void => {
       if (!this.opts.signals || this.liveFrom === Infinity) return
       this.pollSignals()

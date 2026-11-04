@@ -1307,6 +1307,8 @@ function openFootprintSettings(p: ChartPane): void {
   modalCheckField(modal, 'Shade value area', o.showValueArea, (v) => set({ showValueArea: v }))
   modalCheckField(modal, 'Show delta / volume under bars', o.showTotals, (v) => set({ showTotals: v }))
   modalCheckField(modal, 'Yellow candles where delta disagrees with direction', o.divergenceCandles, (v) => set({ divergenceCandles: v }))
+  modalCheckField(modal, 'BUY / SELL when the next candle closes past a divergence candle (alternating)', o.breakLabels, (v) => set({ breakLabels: v }))
+  modalCheckField(modal, 'Alert on new BUY / SELL labels', o.breakAlerts, (v) => set({ breakAlerts: v }))
   modalNumField(modal, 'History depth (bars)', o.historyBars, 20, 2000, 10, (v) => set({ historyBars: v }))
 
   modal.appendChild(el('div', { class: 'modal-head' }, 'Trade signals'))

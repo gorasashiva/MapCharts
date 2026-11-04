@@ -706,6 +706,10 @@ export class ChartPane {
     // GEX Sabers levels for the footprint signals' confluence (recomputed at most every 5s)
     let gexAt = 0
     let gexLevels: { price: number; label: string; strength: number }[] = []
+    this.footprint.onBreakLabel = (_side, text, o) => {
+      askNotificationPermissionOnce()
+      fireSignalAlert(`Footprint ${this.state.symbol} ${this.state.interval}`, text, o.sigSound)
+    }
     this.footprint.storeKey = () => `${this.state.symbol}|${this.state.interval}`
     this.footprint.getGexLevels = () => {
       if (Date.now() - gexAt > 5000) {
