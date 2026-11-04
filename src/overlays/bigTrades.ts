@@ -262,7 +262,7 @@ export default class BigTradesOverlay {
         out.push({ time: c.time, price: c.close, volume: avgVolume, side, estimated: false })
       }
     }
-    this.estimatedMarkers = out
+    this.estimatedMarkers = out.sort((a, b) => a.time - b.time)
   }
 
   /**
@@ -281,7 +281,7 @@ export default class BigTradesOverlay {
       this.autoComputedOnce = true
     }
     const max = this.opts.maxVolume
-    this.historyMarkers = h.clusters
+    this.historyMarkers = [...h.clusters].sort((a, b) => a.time - b.time)
       .filter((c) => !(max > 0 && c.qty > max))
       .map((c) => ({ time: c.time, price: c.price, volume: c.qty, side: c.side, estimated: false }))
     for (const m of this.historyMarkers) if (m.volume > this.rollingMaxVolume) this.rollingMaxVolume = m.volume
@@ -408,17 +408,24 @@ export default class BigTradesOverlay {
     this.ctx.rect(rect.x, rect.y, rect.width, rect.height)
     this.ctx.clip()
 
+    // only the markers in (or, for zones, reaching into) the visible time range
+    const pad = 30 // px: a bubble's radius beyond the edge
+    const t0 = conv.xToTime(rect.x - pad), t1 = conv.xToTime(rect.x + rect.width + pad)
+    const zoneT0 = t0 - this.opts.zoneExtendBars * this.barMs
+
     // Zones first, so bubbles sit on top of them.
     if (this.opts.zoneWick !== 'none' || this.opts.zoneBody !== 'none') {
-      for (const m of this.historyMarkers) this.drawZone(conv, rect, m)
-      if (this.cutoff === null) for (const m of this.liveMarkers) this.drawZone(conv, rect, m)
+      forVisible(this.historyMarkers, zoneT0, t1, (m) => this.drawZone(conv, rect, m))
+      if (this.cutoff === null) forVisible(this.liveMarkers, zoneT0, t1, (m) => this.drawZone(conv, rect, m))
     }
 
     // Estimates only where no recorded tape covers the bar.
     const from = this.historyFrom
-    for (const m of this.estimatedMarkers) if (from === null || m.time < from) this.drawMarker(conv, rect, m)
-    for (const m of this.historyMarkers) this.drawMarker(conv, rect, m)
-    if (this.cutoff === null) for (const m of this.liveMarkers) this.drawMarker(conv, rect, m)
+    forVisible(this.estimatedMarkers, t0, t1, (m) => {
+      if (from === null || m.time < from) this.drawMarker(conv, rect, m)
+    })
+    forVisible(this.historyMarkers, t0, t1, (m) => this.drawMarker(conv, rect, m))
+    if (this.cutoff === null) forVisible(this.liveMarkers, t0, t1, (m) => this.drawMarker(conv, rect, m))
 
     this.ctx.restore()
   }
@@ -502,4 +509,25 @@ export default class BigTradesOverlay {
       ctx.fillText(label, x, y)
     }
   }
+}
+
+/**
+ * Call `fn` for the markers with time in [t0, t1]. Markers are kept in time order,
+ * so this binary-searches the start and stops at the end instead of walking the whole
+ * history every frame; an out-of-order list falls back to checking every marker.
+ */
+function forVisible<T extends { time: number }>(arr: T[], t0: number, t1: number, fn: (m: T) => void): void {
+  const n = arr.length
+  if (!n) return
+  if (arr[0].time > arr[n - 1].time) {
+    for (const m of arr) if (m.time >= t0 && m.time <= t1) fn(m)
+    return
+  }
+  let lo = 0, hi = n
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (arr[mid].time < t0) lo = mid + 1
+    else hi = mid
+  }
+  for (let i = lo; i < n && arr[i].time <= t1; i++) fn(arr[i])
 }

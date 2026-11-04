@@ -22,6 +22,7 @@ import { autoRowSize, computeTpo, dayType, firstTouchAfter, inferTick, tpoLetter
 import { COL, PALETTE, colorOpts } from './flyingCpr'
 import { askNotificationPermissionOnce, fireSignalAlert } from './signalAlert'
 import type { CanvasIndicatorContext } from './shankyCombo'
+import { chartInset } from '../../src/overlays/chartInset'
 
 type Rect = { x: number; y: number; width: number; height: number }
 
@@ -470,5 +471,5 @@ function note(g: CanvasRenderingContext2D, rect: Rect, text: string): void {
   g.font = `600 11px ${FONT}`
   g.textAlign = 'left'
   g.fillStyle = 'rgba(255, 183, 77, 0.9)'
-  g.fillText(text, rect.x + 8, rect.y + rect.height - 40)
+  g.fillText(text, rect.x + chartInset(g.canvas) + 8, rect.y + rect.height - 40)
 }

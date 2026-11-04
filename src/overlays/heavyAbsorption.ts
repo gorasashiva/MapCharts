@@ -345,7 +345,8 @@ export default class HeavyAbsorptionOverlay {
     g.font = "500 10px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
     const w = g.measureText(text).width + 12
     const px = rect.x + (rect.width - w) / 2
-    const py = rect.y + rect.height - 24
+    // one line above the footprint's status line (which sits along the bottom-left)
+    const py = rect.y + rect.height - 41
     g.fillStyle = 'rgba(19, 23, 34, 0.82)'
     g.beginPath()
     g.roundRect(px, py, w, 17, 4)

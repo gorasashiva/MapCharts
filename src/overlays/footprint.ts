@@ -33,6 +33,7 @@ import type { Candle } from '../core/types'
 import type { IChartEngine } from '../chart/types'
 import { buyShare } from './profileZones'
 import { lazyCanvas } from './lazyCanvas'
+import { chartInset } from './chartInset'
 import { FootprintSignalsLayer, type FpSignalEvent } from './footprintSignalsLayer'
 import { publishFootprintBars } from './footprintBarStore'
 import { FP_SIGNAL_DEFAULTS, type FpGexLevel, type FpSignalOptions } from './footprintSignalsModel'
@@ -669,17 +670,18 @@ export default class FootprintOverlay {
           : this.subs.length
             ? `history ≈ ${this.subLabel} bars (estimated), live = trades`
             : 'no history from the exchange — live trades only'
-    ctx.fillText(`Footprint · row ${fmt(rs)} · ${src}`, rect.x + 8, rect.y + rect.height - 10)
+    const left = rect.x + chartInset(this.canvas) + 8
+    ctx.fillText(`Footprint · row ${fmt(rs)} · ${src}`, left, rect.y + rect.height - 10)
     if (this.opts.divergenceCandles) this.drawDivergenceCandles(c, conv, rect, spacing)
     if (this.opts.breakLabels) this.drawBreakLabels(c, conv, rect, spacing)
     const signals = (): void => {
       if (!this.opts.signals || this.liveFrom === Infinity) return
       this.pollSignals()
-      this.signals.draw(ctx, conv, rect, c, this.opts.sigHistory)
+      this.signals.draw(ctx, conv, rect, c, this.opts.sigHistory, chartInset(this.canvas))
     }
     // a profile reads fine much narrower than number cells
     if (spacing < (this.opts.mode === 'profile' ? 6 : 14)) {
-      ctx.fillText('Zoom in to see footprint cells', rect.x + 8, rect.y + rect.height - 24)
+      ctx.fillText('Zoom in to see footprint cells', left, rect.y + rect.height - 24)
       signals()
       ctx.restore()
       return

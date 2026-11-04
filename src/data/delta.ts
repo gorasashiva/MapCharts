@@ -180,11 +180,17 @@ function openSocket(subscribeMsg: unknown, onMessage: (data: any) => void): () =
     if (reconnectTimer) clearTimeout(reconnectTimer)
     reconnectTimer = null
     if (!ws) return
-    ws.onopen = ws.onmessage = ws.onclose = ws.onerror = null
-    try {
-      ws.close()
-    } catch {
-      /* already closing */
+    const old = ws
+    old.onopen = old.onmessage = old.onclose = old.onerror = null
+    if (old.readyState === WebSocket.CONNECTING) {
+      // closing mid-handshake makes the browser log an error: close it once it opens instead
+      old.onopen = () => old.close()
+    } else {
+      try {
+        old.close()
+      } catch {
+        /* already closing */
+      }
     }
     ws = null
   }

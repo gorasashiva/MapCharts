@@ -34,8 +34,22 @@ export function nyParts(ms: number): NyParts {
   return { date, hour: Number(p.hour), minute: Number(p.minute), weekday: weekdayOf(date) }
 }
 
+// the offset only changes on a UTC hour (02:00 New York), so one lookup per hour is exact;
+// formatToParts is slow, and session-anchored studies ask for it on every bar
+const offsetByHour = new Map<number, number>()
+
 /** NY minus UTC, in minutes (−240 in summer, −300 in winter). */
 export function nyOffsetMinutes(ms: number): number {
+  const hour = Math.floor(ms / 3_600_000)
+  const hit = offsetByHour.get(hour)
+  if (hit !== undefined) return hit
+  const v = nyOffsetUncached(ms)
+  if (offsetByHour.size > 20_000) offsetByHour.clear()
+  offsetByHour.set(hour, v)
+  return v
+}
+
+function nyOffsetUncached(ms: number): number {
   const p: Record<string, string> = {}
   for (const x of fmt.formatToParts(new Date(ms))) p[x.type] = x.value
   const asUtc = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute), Number(p.second))

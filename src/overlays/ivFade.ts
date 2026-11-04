@@ -770,12 +770,21 @@ export default class IvFadeOverlay implements StrategyOverlay {
     })()
   }
 
+  private lastStructure = ''
+  private computedAt = 0
+
   private recompute(): void {
     const c = this.candles
     if (c.length < 2) return
     const last = c[c.length - 1]
     const sig = `${c.length}:${c[0].time}:${last.time}:${last.high}:${last.low}:${last.close}:${this.daily.length}:${this.ltf.length}:${this.status}`
     if (sig === this.lastSig) return
+    // the forming bar's ticks only: at most once a second (a new bar or data recomputes at once)
+    const structure = `${c.length}:${c[0].time}:${last.time}:${this.daily.length}:${this.ltf.length}:${this.status}`
+    const now = performance.now()
+    if (structure === this.lastStructure && now - this.computedAt < 1000) return
+    this.lastStructure = structure
+    this.computedAt = now
     this.lastSig = sig
     this.barMs = medianBarMs(c)
     this.result = computeIvFade(c, this.daily, this.ltf, this.opts, this.barMs)

@@ -328,7 +328,7 @@ export class FootprintSignalsLayer {
     return fpStats(this.trades)
   }
 
-  draw(ctx: CanvasRenderingContext2D, conv: Conv, rect: Rect, c: Candle[], showHistory: boolean): void {
+  draw(ctx: CanvasRenderingContext2D, conv: Conv, rect: Rect, c: Candle[], showHistory: boolean, leftInset = 0): void {
     if (c.length < 2) return
     const right = rect.x + rect.width
     const spacing = Math.abs(conv.timeToX(c[c.length - 1].time) - conv.timeToX(c[c.length - 2].time)) || 6
@@ -431,11 +431,11 @@ export class FootprintSignalsLayer {
     ctx.beginPath()
     // bottom left, above the footprint's own status lines (the legend owns the top left)
     const yCard = rect.y + rect.height - 62
-    ctx.roundRect(rect.x + 8, yCard, w, 20, 4)
+    ctx.roundRect(rect.x + leftInset + 8, yCard, w, 20, 4)
     ctx.fill()
     ctx.fillStyle = s.trades && s.avgR < 0 ? '#ff8a80' : '#d1d4dc'
     ctx.textAlign = 'left'
-    ctx.fillText(card, rect.x + 16, yCard + 10.5)
+    ctx.fillText(card, rect.x + leftInset + 16, yCard + 10.5)
     ctx.restore()
   }
 }

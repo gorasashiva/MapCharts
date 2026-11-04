@@ -31,6 +31,7 @@ import { drawTheMapV2, type TheMapV2Model } from './theMapV2'
 import type { CanvasIndicatorContext } from './shankyCombo'
 import { computeMapTrades, mapTradeLevels, MAP_TRADE_DEFAULTS, type MapSessionLevels, type MapTrade, type MapTradeOptions } from '../../src/overlays/mapV3TradesModel'
 import { footprintBars } from '../../src/overlays/footprintBarStore'
+import { chartInset } from '../../src/overlays/chartInset'
 import { askNotificationPermissionOnce, fireSignalAlert } from './signalAlert'
 import type { StrategyTrade } from '../../src/strategy/types'
 
@@ -230,6 +231,8 @@ export function computeTheMapV3Model(candles: Candle[], p: Record<string, number
   return { ...m, trades, tradeTimes: times, tradeView: view }
 }
 
+const levelCache = new Map<string, ReturnType<typeof computeMapV3Levels>>()
+
 function computeTheMapV3Levels(candles: Candle[], p: Record<string, number>, ctx: CanvasIndicatorContext): TheMapV2Model {
   const b = (k: string): boolean => p[k] === undefined || p[k] !== 0
   const show = { heat: b('showHeat'), zdte: b('show0dte'), gex: b('showGex'), oi: b('showOI'), eng: b('showEng') }
@@ -240,7 +243,14 @@ function computeTheMapV3Levels(candles: Candle[], p: Record<string, number>, ctx
   const { m, c, ratio, spot } = ses
 
   const opts = { windowDays: ses.windowDays, oiExpiry: OI_EXPIRY[p.oiExpiry ?? 0] ?? 'Every Expiry' }
-  const r = computeMapV3Levels(m.rows, c ? c.rows : null, spot, m.time, opts, U)
+  // a session's levels are fixed: price the gamma profile once, not on every tick
+  const lkey = `${m.nyDate}|${c?.nyDate ?? ''}|${spot}|${opts.windowDays}|${opts.oiExpiry}`
+  let r = levelCache.get(lkey)
+  if (r === undefined) {
+    r = computeMapV3Levels(m.rows, c ? c.rows : null, spot, m.time, opts, U)
+    if (levelCache.size > 50) levelCache.clear()
+    levelCache.set(lkey, r)
+  }
   if (!r) return { ...base, waiting: `⚠ MAP V3: no usable contracts in ${m.nyDate}` }
   const levels: MapV2Levels = scaleMapLevels(r.levels, ratio)
   const stamp = ses.stamp.startsWith('⚠') ? ses.stamp : `MAP V3 · ${ses.stamp}`
@@ -455,11 +465,12 @@ function drawMapTrades(g: CanvasRenderingContext2D, conv: Converters, rect: Rect
   const yc = rect.y + rect.height - 86
   g.fillStyle = 'rgba(19,23,34,0.85)'
   g.beginPath()
-  g.roundRect(rect.x + 8, yc, w, 20, 4)
+  const left = rect.x + chartInset(g.canvas) + 8
+  g.roundRect(left, yc, w, 20, 4)
   g.fill()
   g.fillStyle = closed.length && tot < 0 ? '#ff8a80' : '#d1d4dc'
   g.textAlign = 'left'
-  g.fillText(card, rect.x + 16, yc + 10.5)
+  g.fillText(card, left + 8, yc + 10.5)
   g.restore()
 }
 

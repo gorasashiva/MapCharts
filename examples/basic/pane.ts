@@ -323,6 +323,11 @@ function computeIndicatorOutputs(
   return computeIndicatorIncremental(cache, inst.defId, candles, def, inst.params, FULL_HISTORY_INDICATOR_IDS.has(inst.defId))
 }
 
+/** Symbols Delta serves 5-second candles for. */
+const FIVE_SECOND_SYMBOLS = new Set(['BTCUSD', 'ETHUSD'])
+/** Fastest that indicators re-run on the forming bar's ticks (ms); a new bar re-runs them at once. */
+const TICK_RECOMPUTE_MS = 250
+
 export class ChartPane {
   readonly root: HTMLElement
   readonly engine: IChartEngine
@@ -676,7 +681,10 @@ export class ChartPane {
       this.canvasHost,
       this.engine,
       () => this.candles,
-      (iv, limit, end) => this.provider.fetchCandles(this.state.symbol, iv as Interval, limit, end),
+      // Delta serves 5s candles for BTCUSD / ETHUSD only: don't ask (a 400 in the console) for the rest
+      (iv, limit, end) => (iv === '5s' && !FIVE_SECOND_SYMBOLS.has(this.state.symbol)
+        ? Promise.reject(new Error('5s candles: BTCUSD / ETHUSD only'))
+        : this.provider.fetchCandles(this.state.symbol, iv as Interval, limit, end)),
       this.state.footprintOptions,
       // exact history from the local tape recorder, where it was running
       (from, to) => this.fetchRecordedTape(from, to),
@@ -2373,18 +2381,27 @@ export class ChartPane {
     // Coalesce indicator recompute to one per animation frame, and only redo the
     // (expensive) signal pass when a new bar forms — interim ticks don't change
     // closed-bar signals. This keeps fast streams from janking the candle repaint.
+    // Within a bar, indicators re-run at most every TICK_RECOMPUTE_MS (a new bar at once):
+    // the candle itself repaints on every tick, and full-history studies need not.
     if (this.state.indicators.length === 0) return
     if (newBar) this.needSignalRecompute = true
     if (this.recomputeScheduled) return
     this.recomputeScheduled = true
-    requestAnimationFrame(() => {
-      if (this.destroyed) return
-      this.recomputeScheduled = false
-      const sig = this.needSignalRecompute
-      this.needSignalRecompute = false
-      this.renderIndicators(sig)
-    })
+    const wait = this.needSignalRecompute ? 0 : Math.max(0, TICK_RECOMPUTE_MS - (performance.now() - this.tickRecomputedAt))
+    const run = (): void => {
+      requestAnimationFrame(() => {
+        if (this.destroyed) return
+        this.recomputeScheduled = false
+        const sig = this.needSignalRecompute
+        this.needSignalRecompute = false
+        this.tickRecomputedAt = performance.now()
+        this.renderIndicators(sig)
+      })
+    }
+    if (wait > 0) setTimeout(run, wait)
+    else run()
   }
+  private tickRecomputedAt = 0
 
   private backfilling = false
   private backfillAt = 0
