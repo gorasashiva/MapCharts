@@ -38,6 +38,7 @@ import LiquidityLevelsOverlay from '../../src/overlays/liquidityLevels'
 import BigTradesOverlay, { type BigTradesOptions } from '../../src/overlays/bigTrades'
 import DeepTradesOverlay, { type DeepTradesOptions } from '../../src/overlays/deepTrades'
 import HeavyAbsorptionOverlay, { type HeavyAbsorptionOverlayOptions } from '../../src/overlays/heavyAbsorption'
+import DeepProfileOverlay, { type DeepProfileOptions, type DpHit, type DpProfileAction } from '../../src/overlays/deepProfile'
 import { askNotificationPermissionOnce, fireSignalAlert } from './signalAlert'
 import { computeGexSabersModel } from './gexSabers'
 import VolumeProfileOverlay, { type VolumeProfileOptions } from '../../src/overlays/volumeProfile'
@@ -47,7 +48,7 @@ import { fetchOptionChain } from './options'
 import IVWallsOverlay, { type IVWallsOptions } from '../../src/overlays/ivWalls'
 import IvZonesOverlay from '../../src/overlays/ivZones'
 import type { IvZonesOptions } from '../../src/overlays/ivZonesModel'
-import { sessionOpenHourUTC } from '../../src/core/session'
+import { sessionOpenHourUTC, sessionOpenNyHour } from '../../src/core/session'
 import CprOverlay, { PREV_HL_LABEL, type CprOptions } from '../../src/overlays/cpr'
 import { isRebinnedChartType } from '../../src/chart/types'
 import GexV2Overlay, { type GexV2Options } from './gexV2'
@@ -199,6 +200,8 @@ export interface PaneState {
   deepTradesOptions?: Partial<DeepTradesOptions>
   heavyAbsorption?: boolean
   heavyAbsorptionOptions?: Partial<HeavyAbsorptionOverlayOptions>
+  deepProfile?: boolean
+  deepProfileOptions?: Partial<DeepProfileOptions>
   footprintOptions?: Partial<FootprintOptions>
   volumeProfileOptions?: Partial<VolumeProfileOptions>
   gexOptions?: Partial<GexOptions>
@@ -397,6 +400,7 @@ export class ChartPane {
   private readonly bigTrades: BigTradesOverlay
   private readonly deepTrades: DeepTradesOverlay
   private readonly heavyAbsorption: HeavyAbsorptionOverlay
+  private readonly deepProfile: DeepProfileOverlay
   private readonly volumeProfileTool: VolumeProfileOverlay
   private readonly footprint: FootprintOverlay
   private readonly gex: GexOverlay
@@ -662,6 +666,13 @@ export class ChartPane {
     this.heavyAbsorption.onAlert = (text, sound) => fireSignalAlert(`Heavy Absorption · ${this.state.symbol}`, text, sound)
     this.heavyAbsorption.setSymbol(this.state.symbol)
     this.setHeavyAbsorptionEnabled(this.state.heavyAbsorption ?? false)
+
+    // Deep Profile: DeepCharts-style volume / delta profiles per period, from
+    // the exact tape where recorded (live prints fed below), candle estimates
+    // elsewhere. See deepProfile.ts.
+    this.deepProfile = new DeepProfileOverlay(this.canvasHost, this.engine, () => this.candles, (from, to) => this.fetchRecordedTape(from, to), this.state.deepProfileOptions)
+    this.deepProfile.setSymbol(this.state.symbol, sessionOpenNyHour(this.state.symbol), sessionOpenHourUTC(this.state.symbol))
+    this.deepProfile.setEnabled(this.state.deepProfile ?? false)
 
     // Deep Trades: DeepCharts-style large-trade + resting-liquidity marker
     // approximation (no true MBO feed available) — see deepTrades.ts.
@@ -1324,6 +1335,42 @@ export class ChartPane {
     this.state.heavyAbsorptionOptions = { ...(this.state.heavyAbsorptionOptions ?? {}), ...patch }
   }
 
+  setDeepProfileEnabled(on: boolean): void {
+    this.state.deepProfile = on
+    this.deepProfile.setEnabled(on)
+  }
+
+  getDeepProfileOptions(): DeepProfileOptions {
+    return this.deepProfile.getOptions()
+  }
+
+  applyDeepProfileOption(patch: Partial<DeepProfileOptions>): void {
+    this.deepProfile.setOptions(patch)
+    this.state.deepProfileOptions = { ...(this.state.deepProfileOptions ?? {}), ...patch }
+  }
+
+  /** Deep Profile under a chart time (right-click menu), or null. */
+  deepProfileHit(time: number): DpHit | null {
+    return this.state.deepProfile ? this.deepProfile.hitTest(time) : null
+  }
+
+  deepProfileAction(time: number, action: DpProfileAction | 'reset' | 'removeCustom' | 'clearCustom'): void {
+    if (action === 'reset') return this.applyDeepProfileOption({ joined: [] })
+    if (action === 'clearCustom') return this.applyDeepProfileOption({ customRanges: [] })
+    if (action === 'removeCustom') {
+      const ranges = this.deepProfile.getOptions().customRanges.filter((r) => !(time >= r[0] && time < r[1]))
+      return this.applyDeepProfileOption({ customRanges: ranges })
+    }
+    const patch = this.deepProfile.profileAction(time, action)
+    if (patch) this.applyDeepProfileOption(patch)
+  }
+
+  /** Drag out a Custom Deep Profile range on this chart (turns the tool on). */
+  drawDeepProfileCustom(): void {
+    if (!this.state.deepProfile) this.setDeepProfileEnabled(true)
+    this.deepProfile.startCustomDraw((patch) => this.applyDeepProfileOption(patch))
+  }
+
   setDeepTradesEnabled(on: boolean): void {
     this.state.deepTrades = on
     this.deepTrades.setEnabled(on)
@@ -1811,6 +1858,7 @@ export class ChartPane {
         this.footprint.addTrade(trade)
         if (this.state.deepTrades) this.deepTrades.addTrade({ time: trade.time, timeUs: trade.timeUs, price: trade.price, volume: trade.qty, side: trade.side })
         if (this.state.heavyAbsorption) this.heavyAbsorption.addTrade({ time: trade.time, timeUs: trade.timeUs, price: trade.price, volume: trade.qty, side: trade.side })
+        if (this.state.deepProfile) this.deepProfile.addTrade(trade)
         if (this.state.orderFlow) {
           this.orderflow.onTrade({
             time: trade.time,
@@ -2030,6 +2078,7 @@ export class ChartPane {
     this.deepTrades.setSymbol(this.state.symbol)
     this.deepTrades.reset()
     this.heavyAbsorption.setSymbol(this.state.symbol)
+    this.deepProfile.setSymbol(this.state.symbol, sessionOpenNyHour(this.state.symbol), sessionOpenHourUTC(this.state.symbol))
     this.volumeProfileTool.reset() // session/bars period must not mix candles from the old symbol
     // Session-anchored tools follow the new symbol's trading-day open (gold 03:30 IST) — see core/session.ts.
     this.volumeProfileTool.setSessionOpenHour(sessionOpenHourUTC(this.state.symbol))
@@ -2264,6 +2313,7 @@ export class ChartPane {
       this.bigTrades.setCutoff(replayAt)
       this.deepTrades.setCutoff(replayAt)
       this.heavyAbsorption.setCutoff(replayAt)
+      this.deepProfile.setCutoff(replayAt)
     }
   }
 
@@ -2506,6 +2556,7 @@ export class ChartPane {
     this.bigTrades.setCutoff(null)
     this.deepTrades.setCutoff(null)
     this.heavyAbsorption.setCutoff(null)
+    this.deepProfile.setCutoff(null)
     this.ivWalls.setReplay(null)
     this.cancelBarPick()
     this.engine.setReplayCursor(null)
@@ -2523,6 +2574,7 @@ export class ChartPane {
       const info = await this.provider.getSymbolInfo(this.state.symbol)
       if (gen !== this.loadGen) return
       this.symbolPrecision = info.pricePrecision
+      this.deepProfile.setSymbolTick(Math.pow(10, -info.pricePrecision))
       this.engine.setPricePrecision(this.precisionOverride ?? info.pricePrecision)
 
       const hist = await this.provider.fetchCandles(this.state.symbol, this.state.interval, 1000)
@@ -2707,6 +2759,7 @@ export class ChartPane {
     this.bigTrades.destroy()
     this.deepTrades.destroy()
     this.heavyAbsorption.destroy()
+    this.deepProfile.destroy()
     this.volumeProfileTool.destroy()
     this.footprint.destroy()
     this.gex.destroy()

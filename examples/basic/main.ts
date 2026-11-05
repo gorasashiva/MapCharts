@@ -30,6 +30,7 @@ import { el, ICONS, registerPopover, closeAllPopovers, layoutPreview, toHex } fr
 import { ChartPane, defaultIndicatorInstance, type PaneState, type IndicatorInstance } from './pane'
 import type { BigTradesOptions } from '../../src/overlays/bigTrades'
 import type { HeavyAbsorptionOverlayOptions } from '../../src/overlays/heavyAbsorption'
+import type { DeepProfileOptions } from '../../src/overlays/deepProfile'
 import type { FvgStrategyOptions } from '../../src/overlays/fvgStrategy'
 import type { IvFadeOptions } from '../../src/overlays/ivFade'
 import { sessionOpenHourUTC, sessionOpenLabelIST } from '../../src/core/session'
@@ -50,7 +51,7 @@ import { DomDashboardView } from './domDashboard'
 import { UnifiedProvider } from './provider'
 import { Watchlist } from './watchlist'
 import { TradeBuddy, BUDDY_ICON } from './buddy'
-import { ContextMenu } from './contextmenu'
+import { ContextMenu, type ContextMenuItem } from './contextmenu'
 import { installShortcuts } from './shortcuts'
 import { fetchOptionChain, SUPPORTED_OPTION_UNDERLYINGS, type OptionUnderlying } from './options'
 import { selectWeeklyIronCondor } from './deltaNeutralPredictor'
@@ -305,7 +306,25 @@ function makePane(state: PaneState): ChartPane {
     const pageX = canvasRect.left + info.x
     const pageY = canvasRect.top + info.y
     const priceLabel = info.price.toFixed(2)
+    const dpHit = p.deepProfileHit(info.time)
+    const dpItems: ContextMenuItem[] = []
+    if (dpHit?.kind === 'period') {
+      if (dpHit.hasPrev) dpItems.push({ label: 'Deep Profile: Merge− (with previous)', onClick: () => p.deepProfileAction(info.time, 'merge-') })
+      if (dpHit.hasNext) dpItems.push({ label: 'Deep Profile: Merge+ (with next)', onClick: () => p.deepProfileAction(info.time, 'merge+') })
+      if (dpHit.merged) {
+        dpItems.push({ label: 'Deep Profile: Split− (from previous)', onClick: () => p.deepProfileAction(info.time, 'split-') })
+        dpItems.push({ label: 'Deep Profile: Split+ (from next)', onClick: () => p.deepProfileAction(info.time, 'split+') })
+      }
+      if (p.getDeepProfileOptions().joined.length) dpItems.push({ label: 'Deep Profile: Reset merges', onClick: () => p.deepProfileAction(info.time, 'reset') })
+    } else if (dpHit?.kind === 'custom') {
+      dpItems.push({ label: 'Deep Profile: Remove this custom profile', danger: true, onClick: () => p.deepProfileAction(info.time, 'removeCustom') })
+    }
+    if (p.state.deepProfile) {
+      dpItems.push({ label: 'Deep Profile: Draw custom profile', onClick: () => p.drawDeepProfileCustom() })
+      dpItems.push({ label: 'Deep Profile settings…', onClick: () => openDeepProfileSettings(p) })
+    }
     contextMenu.show(pageX, pageY, [
+      dpItems,
       [
         { label: 'Reset chart view', hint: '⌥R', onClick: () => p.engine.resetView() },
         { label: `Add alert at ${priceLabel}`, hint: '⌥A', onClick: () => addAlert(p.state.symbol, info.price) },
@@ -1189,6 +1208,164 @@ function openBigTradesSettings(p: ChartPane): void {
 
   modalDoneFoot(modal, close)
   document.body.appendChild(backdrop)
+}
+
+/** "HH:MM" wall-clock field (24h). */
+function modalTimeField(modal: HTMLElement, label: string, value: string, onChange: (v: string) => void): HTMLInputElement {
+  const row = el('label', { class: 'field' })
+  row.appendChild(el('span', { class: 'field-label' }, label))
+  const input = el('input', { type: 'time', class: 'field-input', value, step: '60' }) as HTMLInputElement
+  input.addEventListener('change', () => {
+    if (/^\d{2}:\d{2}$/.test(input.value)) onChange(input.value)
+  })
+  row.appendChild(input)
+  modal.appendChild(row)
+  return input
+}
+
+function openDeepProfileSettings(p: ChartPane): void {
+  const set = (patch: Partial<DeepProfileOptions>): void => p.applyDeepProfileOption(patch)
+  const head = (body: HTMLElement, text: string): void => void body.appendChild(el('div', { class: 'modal-head' }, text))
+  openTabbedModal(
+    'Deep Profile',
+    'Volume / delta profiles per period, DeepCharts-style. Exact from the recorded trade tape and live prints; where no tape exists a bar is estimated from its candle (its volume spread over its range) and the profile header shows the estimated share. Size filters and Number of Trades need the tape, so estimated bars drop out while a filter is on. Right-click a profile to merge or split it; Custom ranges are drawn from the right-click menu.',
+    [
+      {
+        label: 'General',
+        build: (body) => {
+          const o = p.getDeepProfileOptions()
+          head(body, 'Profile')
+          modalSelectField(body, 'VBP type', o.vbpType, [
+            ['volume', 'Volume profile'],
+            ['bidask', 'Ask / Bid volume profile'],
+            ['delta', 'Delta profile'],
+            ['deltaVolume', 'Delta (left) + total volume (right)'],
+          ], (v) => set({ vbpType: v as DeepProfileOptions['vbpType'] }))
+          modalSelectField(body, 'VBP period', o.period, [
+            ['latest', 'Latest — current period only'],
+            ['multiple', 'Multiple — one per period'],
+            ['composite', 'Composite — all loaded data'],
+            ['visible', 'Visible — what is on screen'],
+            ['custom', 'Custom — ranges you draw'],
+          ], (v) => set({ period: v as DeepProfileOptions['period'] }))
+          modalSelectField(body, 'Length type', o.lengthType, [
+            ['minutes', 'Minutes'],
+            ['hours', 'Hours'],
+            ['days', 'Days (trading day)'],
+            ['weeks', 'Weeks'],
+            ['months', 'Months'],
+          ], (v) => set({ lengthType: v as DeepProfileOptions['lengthType'] }))
+          modalNumField(body, 'Length value', o.lengthValue, 1, 500, 1, (v) => set({ lengthValue: Math.max(1, Math.round(v)) }))
+          head(body, 'Split time (1-day periods)')
+          modalSelectField(body, 'Filter mode', o.splitMode, [
+            ['none', 'None — one profile a day'],
+            ['splitted', 'Splitted — 2 a day (at time 1)'],
+            ['triple', 'Triple — 3 a day (at times 1 and 2)'],
+          ], (v) => set({ splitMode: v as DeepProfileOptions['splitMode'] }))
+          modalSelectField(body, 'Time zone', o.splitZone, [
+            ['NY', 'New York (exchange, DST aware)'],
+            ['IST', 'IST'],
+            ['UTC', 'UTC'],
+          ], (v) => set({ splitZone: v as DeepProfileOptions['splitZone'] }))
+          modalTimeField(body, 'Split time 1 (RTH open: 08:20 NY for gold)', o.split1, (v) => set({ split1: v }))
+          modalTimeField(body, 'Split time 2 (Triple)', o.split2, (v) => set({ split2: v }))
+          head(body, 'Custom profiles')
+          const row = el('div', { class: 'field' })
+          const draw = el('button', { class: 'btn' }, 'Draw a custom profile') as HTMLButtonElement
+          draw.addEventListener('click', () => {
+            document.querySelector('.modal-backdrop')?.remove()
+            p.drawDeepProfileCustom()
+          })
+          const clear = el('button', { class: 'btn' }, `Clear all (${o.customRanges.length})`) as HTMLButtonElement
+          clear.addEventListener('click', () => {
+            p.deepProfileAction(0, 'clearCustom')
+            clear.textContent = 'Clear all (0)'
+          })
+          row.append(draw, clear)
+          body.appendChild(row)
+        },
+      },
+      {
+        label: 'Data',
+        build: (body) => {
+          const o = p.getDeepProfileOptions()
+          head(body, 'Input data')
+          modalSelectField(body, 'Input', o.input, [
+            ['volume', 'Volume — every print'],
+            ['order', 'Order — prints merged into taker orders'],
+            ['aggregate', 'Aggregate — orders merged into clusters'],
+          ], (v) => set({ input: v as DeepProfileOptions['input'] }))
+          modalCheckField(body, 'Number of trades (count instead of volume)', o.countTrades, (v) => set({ countTrades: v }))
+          modalNumField(body, 'Min filter (size, 0 = off)', o.minFilter, 0, 1_000_000, 0.01, (v) => set({ minFilter: Math.max(0, v) }))
+          modalNumField(body, 'Max filter (size, 0 = off)', o.maxFilter, 0, 1_000_000, 0.01, (v) => set({ maxFilter: Math.max(0, v) }))
+          modalNumField(body, 'Days of recorded tape', o.daysToLoad, 1, 14, 1, (v) => set({ daysToLoad: Math.round(v) }))
+          head(body, 'Tick grouping')
+          let autoPx: HTMLInputElement | null = null
+          let manual: HTMLInputElement | null = null
+          modalSelectField(body, 'Auto grouping', o.autoGrouping ? 'auto' : 'manual', [
+            ['auto', 'Automatic — from the price scale (changes with zoom)'],
+            ['manual', 'Manual — fixed ticks per row'],
+          ], (v) => {
+            set({ autoGrouping: v === 'auto' })
+            if (autoPx) autoPx.disabled = v !== 'auto'
+            if (manual) manual.disabled = v === 'auto'
+          })
+          autoPx = modalNumField(body, 'Auto row height (px)', o.autoRowPx, 2, 40, 1, (v) => set({ autoRowPx: v }))
+          manual = modalNumField(body, 'Manual tick', o.manualTicks, 1, 10_000, 1, (v) => set({ manualTicks: Math.max(1, Math.round(v)) }))
+          autoPx.disabled = !o.autoGrouping
+          manual.disabled = o.autoGrouping
+          modalNumField(body, 'Auto group factor (× rows)', o.groupFactor, 1, 100, 1, (v) => set({ groupFactor: Math.max(1, Math.round(v)) }))
+          modalNumField(body, 'Tick size (0 = symbol)', o.tickSize, 0, 1000, 0.01, (v) => set({ tickSize: Math.max(0, v) }))
+        },
+      },
+      {
+        label: 'POC & Nodes',
+        build: (body) => {
+          const o = p.getDeepProfileOptions()
+          head(body, 'POC of profile')
+          modalCheckField(body, 'Enable', o.pocEnable, (v) => set({ pocEnable: v }))
+          modalCheckField(body, 'Highlight POC row', o.pocHighlight, (v) => set({ pocHighlight: v }))
+          modalColorField(body, 'Highlight color', o.pocColor, (v) => set({ pocColor: v }))
+          modalSelectField(body, 'Show line', o.pocLine, [
+            ['none', 'None'],
+            ['current', 'Current POC'],
+            ['developing', 'Developing POC'],
+          ], (v) => set({ pocLine: v as DeepProfileOptions['pocLine'] }))
+          modalCheckField(body, 'Extend line till end of window', o.pocExtend, (v) => set({ pocExtend: v }))
+          modalColorField(body, 'Line color', o.pocLineColor, (v) => set({ pocLineColor: v }))
+          modalNumField(body, 'Line width', o.pocLineWidth, 1, 5, 1, (v) => set({ pocLineWidth: v }))
+          modalCheckField(body, 'Price-scale tag (newest profile)', o.pocTag, (v) => set({ pocTag: v }))
+          modalCheckField(body, 'Value area (dim rows outside it)', o.showValueArea, (v) => set({ showValueArea: v }))
+          modalNumField(body, 'Value area %', o.valueAreaPct, 0.1, 0.99, 0.05, (v) => set({ valueAreaPct: v }))
+          head(body, 'Peak and valley')
+          modalCheckField(body, 'Peaks (high-volume nodes)', o.showPeaks, (v) => set({ showPeaks: v }))
+          modalColorField(body, 'Peak color', o.peakColor, (v) => set({ peakColor: v }))
+          modalCheckField(body, 'Valleys (low-volume nodes)', o.showValleys, (v) => set({ showValleys: v }))
+          modalColorField(body, 'Valley color', o.valleyColor, (v) => set({ valleyColor: v }))
+          modalNumField(body, 'Sensitivity (higher = fewer, stronger nodes)', o.sensitivity, 1, 10, 1, (v) => set({ sensitivity: Math.round(v) }))
+          modalCheckField(body, 'Extend node lines till end of window', o.extendNodes, (v) => set({ extendNodes: v }))
+        },
+      },
+      {
+        label: 'Style',
+        build: (body) => {
+          const o = p.getDeepProfileOptions()
+          modalColorField(body, 'Volume', o.volumeColor, (v) => set({ volumeColor: v }))
+          modalColorField(body, 'Ask / buy (+delta)', o.askColor, (v) => set({ askColor: v }))
+          modalColorField(body, 'Bid / sell (−delta)', o.bidColor, (v) => set({ bidColor: v }))
+          modalNumField(body, 'Opacity', o.alpha, 0.1, 1, 0.05, (v) => set({ alpha: v }))
+          modalNumField(body, 'Bar length (share of period)', o.fillPct, 0.2, 1, 0.05, (v) => set({ fillPct: v }))
+          modalNumField(body, 'Composite / Visible width (share of pane)', o.sideWidthPct, 0.05, 0.6, 0.01, (v) => set({ sideWidthPct: v }))
+          modalSelectField(body, 'Composite / Visible placement', o.placement, [
+            ['right', 'Right'],
+            ['left', 'Left'],
+          ], (v) => set({ placement: v as DeepProfileOptions['placement'] }))
+          modalCheckField(body, 'Values on rows', o.showValues, (v) => set({ showValues: v }))
+          modalCheckField(body, 'Totals above each profile', o.showTotals, (v) => set({ showTotals: v }))
+        },
+      },
+    ],
+  )
 }
 
 function openHeavyAbsorptionSettings(p: ChartPane): void {
@@ -2265,6 +2442,7 @@ const POWER_TOOLS: PowerTool[] = [
   { id: 'bigTrades', label: 'Big Trades', icon: '🐋', isOn: (p) => !!p.state.bigTrades, setOn: (p, on) => p.setBigTradesEnabled(on), openSettings: openBigTradesSettings },
   { id: 'deepTrades', label: 'Deep Trades', icon: '💎', isOn: (p) => !!p.state.deepTrades, setOn: (p, on) => p.setDeepTradesEnabled(on), openSettings: openDeepTradesSettings },
   { id: 'heavyAbsorption', label: 'Heavy Absorption', icon: '🧲', isOn: (p) => !!p.state.heavyAbsorption, setOn: (p, on) => p.setHeavyAbsorptionEnabled(on), openSettings: openHeavyAbsorptionSettings },
+  { id: 'deepProfile', label: 'Deep Profile', icon: '📊', isOn: (p) => !!p.state.deepProfile, setOn: (p, on) => p.setDeepProfileEnabled(on), openSettings: openDeepProfileSettings },
   {
     id: 'footprint',
     label: 'Volume Footprint',
