@@ -68,6 +68,8 @@ const fmtDur = (ms: number): string => {
   if (s >= 3600) return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`
   return s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s` : `${s}s`
 }
+/** UTC day index of a timestamp: the volume profile resets when this changes. */
+const utcDay = (t: number): number => Math.floor(t / 86_400_000)
 const istClock = (t: number): string => new Date(t + 5.5 * 3_600_000).toISOString().slice(11, 16)
 const istClockSec = (t: number): string => new Date(t + 5.5 * 3_600_000).toISOString().slice(11, 19)
 const decimalsOf = (x: number): number => {
@@ -131,6 +133,7 @@ export class DomDashboardView {
   private timers: number[] = []
   private raf = 0
   private gen = 0
+  private hoverY: number | null = null // canvas y under the pointer, for the crosshair
 
   // live state
   private session = new DomSession(SYMBOLS[0], Date.now())
@@ -139,6 +142,7 @@ export class DomDashboardView {
   private snaps: HeatSnap[] = []
   private orders: TapeOrder[] = [] // one per taker order, merged from its fills
   private vp = new Map<number, number>() // price -> today's $ volume
+  private vpDay = 0 // UTC day index the profile belongs to; a new day starts it afresh
   private gexTags: GexTag[] = []
   private tick = 0 // book price increment
   private lastPrice = 0
@@ -249,6 +253,11 @@ export class DomDashboardView {
     this.canvas = el('canvas', { class: 'dom-canvas' }) as HTMLCanvasElement
     stage.appendChild(this.canvas)
     this.canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false })
+    this.canvas.addEventListener('pointermove', (e) => {
+      const r = this.canvas.getBoundingClientRect()
+      this.hoverY = e.clientY - r.top
+    })
+    this.canvas.addEventListener('pointerleave', () => (this.hoverY = null))
     const aside = el('aside', { class: 'dom-levels', 'aria-label': 'Liquidity levels' })
     this.subEl = el('p', { class: 'dom-sub' }, '')
     this.liveList = el('ol', {})
@@ -324,6 +333,7 @@ export class DomDashboardView {
     this.snaps = []
     this.orders = []
     this.vp.clear()
+    this.vpDay = utcDay(Date.now())
     this.gexTags = []
     this.tick = 0
     this.lastPrice = 0
@@ -470,6 +480,12 @@ export class DomDashboardView {
   }
 
   private takeSnapshot(): void {
+    // a new UTC day: today's volume profile starts again, not on top of yesterday's
+    const day = utcDay(Date.now())
+    if (day !== this.vpDay) {
+      this.vp.clear()
+      this.vpDay = day
+    }
     const mid = this.tracker.mid
     if (!mid) return
     const levels: [number, number][] = []
@@ -617,13 +633,15 @@ export class DomDashboardView {
     if (!this.topRow || midRow > this.topRow - nRows * 0.25 || midRow < this.topRow - nRows * 0.75) this.topRow = midRow + Math.floor(nRows / 2)
     const top = this.topRow
     const yOf = (row: number): number => (top - row) * rowH
-    const yP = (p: number): number => (top + 1 - p / step) * rowH
+    // A price sits at the vertical centre of its row, the same anchor the ladder labels and level lines use,
+    // so bubbles, markers, the last-price line and the ladder agree to the pixel.
+    const yP = (p: number): number => (top + 0.5 - p / step) * rowH
     const pxPerMs = (narrow ? this.speed.pxPerSec * 0.7 : this.speed.pxPerSec) / 1000
     const xR = x1 - 12 // "now"
     const xOf = (t: number): number => xR - (now - t) * pxPerMs
     const dec = Math.max(decimalsOf(this.tick), decimalsOf(step))
     const fmtPx = (p: number): string => p.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec })
-        const aggOf = (levels: Iterable<[number, number]>): Map<number, number> => {
+    const aggOf = (levels: Iterable<[number, number]>): Map<number, number> => {
       const m = new Map<number, number>()
       for (const [p, v] of levels) m.set(rowOf(p), (m.get(rowOf(p)) ?? 0) + v)
       return m
@@ -838,12 +856,11 @@ export class DomDashboardView {
     labels.sort((a, b) => Math.abs(a[0] - yLast) - Math.abs(b[0] - yLast))
     labels.length = Math.min(labels.length, 10)
     labels.sort((a, b) => a[0] - b[0])
-    let lastY = -99
-    for (const [y, text, col] of labels) {
-      const yy = Math.max(y - 10, lastY + 17)
-      lastY = yy
-      pill(g, x1 - 6, yy, text, col, 'right')
-    }
+    // stack downwards so none overlap, then pull back up from the bottom edge; keep every pill inside the plot
+    const ys = labels.map(([y]) => y - 10)
+    for (let i = 0; i < ys.length; i++) ys[i] = Math.max(ys[i], i ? ys[i - 1] + 17 : 8)
+    for (let i = ys.length - 1; i >= 0; i--) ys[i] = Math.min(ys[i], i + 1 < ys.length ? ys[i + 1] - 17 : plotH - 8)
+    labels.forEach(([, text, col], i) => pill(g, x1 - 6, ys[i], text, col, 'right'))
     g.restore()
 
     // time axis (IST)
@@ -965,6 +982,18 @@ export class DomDashboardView {
     g.lineWidth = 1
     line(g, x1 + 0.5, 0, x1 + 0.5, H)
     line(g, volW - 0.5, 0, volW - 0.5, H)
+
+    // crosshair: the price under the pointer, read with the same mapping the tape uses
+    if (this.hoverY !== null && this.hoverY >= 0 && this.hoverY <= plotH) {
+      const hp = (top + 0.5 - this.hoverY / rowH) * step
+      g.save()
+      g.setLineDash([3, 4])
+      g.strokeStyle = C.text
+      g.globalAlpha = 0.45
+      line(g, x0, this.hoverY, x1, this.hoverY)
+      g.restore()
+      pill(g, x0 + 6, this.hoverY, fmtPx(hp), C.text)
+    }
 
     // toolbar readouts
     this.priceEl.textContent = fmtPx(last)
