@@ -35,6 +35,7 @@ import { tpoTv, computeTpoTvModel, drawTpoTv, type TpoTvModel } from './tpoTv'
 import { fvgMid, computeFvgMidModel, drawFvgMid, type FvgMidModel } from './fvgMid'
 import { vwapEmaAngle, computeVwapEmaAngleModel, drawVwapEmaAngle, type VwapEmaAngleModel } from './vwapEmaAngle'
 import { dcCprBb, computeDcCprBbModel, drawDcCprBb, type DcCprBbModel } from './dcCprBb'
+import { nyFade, computeNyFadeModel, drawNyFade, nyFadeTrades, type NyFadeModel } from './nyFade'
 import { computeVortex } from '../../src/overlays/vortexModel'
 
 // ---- Pine-style helpers (ta.*) ----
@@ -1422,7 +1423,7 @@ function salaarSignals(candles: Candle[], params: Record<string, number>): Signa
  *  leg a full recompute would find, silently freezing the plotted levels.
  *  See lionPivots/lionFindLeg above: the swing search needs pivots from the
  *  full loaded history, not just the last `warmupBars` candles. */
-export const FULL_HISTORY_INDICATOR_IDS = new Set<string>([lionIndicator.id, shadow1sc.id, zigzagFib.id, sessionReversal.id, rangeBreakout.id, renkoFade.id, sessionsIndicator.id, marketStructure.id, mtfCisd.id, hlBlocks.id, aiTrades.id, bulbArrow.id, flyingCpr.id, tpoFade.id, fvgMid.id, tpoTv.id, vwapEmaAngle.id, dcCprBb.id])
+export const FULL_HISTORY_INDICATOR_IDS = new Set<string>([lionIndicator.id, shadow1sc.id, zigzagFib.id, sessionReversal.id, rangeBreakout.id, renkoFade.id, sessionsIndicator.id, marketStructure.id, mtfCisd.id, hlBlocks.id, aiTrades.id, bulbArrow.id, flyingCpr.id, tpoFade.id, fvgMid.id, tpoTv.id, vwapEmaAngle.id, dcCprBb.id, nyFade.id])
 
 const SIGNAL_SOURCES: Record<string, (candles: Candle[], params: Record<string, number>) => Signal[]> = {
   [chotaPanditV3.id]: chotaSignals,
@@ -1549,6 +1550,11 @@ const CANVAS_SOURCES: Record<string, CanvasSource> = {
     compute: computeDcCprBbModel,
     draw: (g, conv, rect, candles, model, ctx) => drawDcCprBb(g, conv, rect, candles, model as DcCprBbModel, ctx),
   },
+  [nyFade.id]: {
+    compute: computeNyFadeModel,
+    draw: (g, conv, rect, candles, model, ctx) => drawNyFade(g, conv, rect, candles, model as NyFadeModel, ctx),
+    strategy: { name: 'NY First-Hour Fade (sessions)', trades: nyFadeTrades },
+  },
 }
 
 /** The canvas renderer for an indicator id, if it has one. */
@@ -1597,6 +1603,7 @@ export const CUSTOM_INDICATORS: IndicatorDef[] = [
   tpoTv,
   vwapEmaAngle,
   dcCprBb,
+  nyFade,
   vortex,
 ]
 
