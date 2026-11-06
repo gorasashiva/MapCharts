@@ -203,6 +203,16 @@ let chartTypeMenu: HTMLElement
 let indMenu: HTMLElement
 let layoutMenu: HTMLElement
 let savedMenu: HTMLElement
+/** The saved layout the workspace was loaded from / last saved to — Save writes back into it. */
+let currentLayoutName: string | null = readJSON<string | null>('candl.currentLayoutName', null)
+function setCurrentLayout(name: string | null): void {
+  currentLayoutName = name
+  try {
+    localStorage.setItem('candl.currentLayoutName', JSON.stringify(name))
+  } catch {
+    /* storage unavailable */
+  }
+}
 let alertMenu: HTMLElement
 let alertBadge: HTMLElement
 let vpBtn: HTMLButtonElement
@@ -2768,50 +2778,86 @@ function applySaved(s: SavedLayout): void {
   updateLayoutSel()
 }
 
+/** Write the current workspace into saved layout `name` and make it the current one. */
+function saveLayoutAs(name: string): void {
+  const m = loadSaved()
+  m[name] = snapshot()
+  persistSaved(m)
+  setCurrentLayout(name)
+}
+
 function refreshSavedMenu(): void {
   if (!savedMenu) return
   savedMenu.innerHTML = ''
+  const m = loadSaved()
+  const names = Object.keys(m)
+  const current = currentLayoutName !== null && currentLayoutName in m ? currentLayoutName : null
+
+  // Save back into the selected layout
+  if (current !== null) {
+    const curRow = el('div', { class: 'save-row' })
+    const saveCur = el('button', { class: 'btn btn-primary save-current', title: 'Overwrite the selected layout with the charts as they are now (⌘S)' }, `Save to “${current}”`)
+    saveCur.addEventListener('click', (e) => {
+      e.stopPropagation()
+      saveLayoutAs(current)
+      flashToast(`Saved “${current}”.`)
+      refreshSavedMenu()
+    })
+    curRow.append(saveCur)
+    savedMenu.appendChild(curRow)
+  }
+
+  // Save as a new layout (an existing name asks before overwriting it)
   const saveRow = el('div', { class: 'save-row' })
-  const input = el('input', { class: 'menu-search', placeholder: 'Layout name…' })
+  const input = el('input', { class: 'menu-search', placeholder: current !== null ? 'New layout name…' : 'Layout name…' }) as HTMLInputElement
   input.addEventListener('click', (e) => e.stopPropagation())
-  const saveBtn = el('button', { class: 'btn btn-primary' }, 'Save')
-  saveBtn.addEventListener('click', (e) => {
-    e.stopPropagation()
+  const saveBtn = el('button', { class: current !== null ? 'btn' : 'btn btn-primary' }, current !== null ? 'Save as new' : 'Save')
+  const saveNew = (): void => {
     const name = input.value.trim()
     if (!name) return
-    const m = loadSaved()
-    m[name] = snapshot()
-    persistSaved(m)
+    if (name in loadSaved() && name !== current && !confirm(`A layout named “${name}” already exists. Overwrite it?`)) return
+    saveLayoutAs(name)
+    flashToast(`Saved “${name}”.`)
     input.value = ''
     refreshSavedMenu()
+  }
+  saveBtn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    saveNew()
+  })
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') saveNew()
   })
   saveRow.append(input, saveBtn)
   savedMenu.appendChild(saveRow)
 
-  const m = loadSaved()
-  const names = Object.keys(m)
   savedMenu.appendChild(el('div', { class: 'menu-head' }, names.length ? 'Saved layouts' : 'No saved layouts yet'))
   for (const name of names) {
-    const row = el('div', { class: 'menu-item' })
+    const on = name === current
+    const row = el('div', { class: `menu-item${on ? ' sel' : ''}`, title: on ? 'Selected layout — Save writes into it' : 'Load this layout' })
+    const check = el('span', { class: 'mi-check' }, on ? '✓' : '')
     const load = el('span', { class: 'mi-grow' }, name)
-    load.addEventListener('click', () => {
+    row.addEventListener('click', () => {
       closeAllPopovers()
-      applySaved(m[name])
+      applySaved(loadSaved()[name] ?? m[name])
+      setCurrentLayout(name)
     })
     const del = el('button', { class: 'mi-icon', title: 'Delete' }, ICONS.trash)
     del.addEventListener('click', (e) => {
       e.stopPropagation()
+      if (!confirm(`Delete layout “${name}”?`)) return
       const mm = loadSaved()
       delete mm[name]
       persistSaved(mm)
+      if (name === currentLayoutName) setCurrentLayout(null)
       refreshSavedMenu()
     })
-    row.append(load, del)
+    row.append(check, load, del)
     savedMenu.appendChild(row)
   }
 }
 function buildSavedLayouts(): HTMLElement {
-  const wrap = el('div', { class: 'dd' })
+  const wrap = el('div', { class: 'dd saved-dd' })
   const trigger = el('button', { class: 'tv-btn', title: 'Saved layouts' })
   trigger.append(el('span', {}, ICONS.layers), el('span', {}, 'Layouts'), el('span', { class: 'chev' }, ICONS.chevron))
   savedMenu = el('div', { class: 'dd-menu' })
@@ -4484,19 +4530,12 @@ window.addEventListener('keydown', (e) => {
 })
 
 // ---- Save (quick-save the current workspace as a named layout) ----
-let currentLayoutName: string | null = readJSON<string | null>('candl.currentLayoutName', null)
+/** Save button / ⌘S: into the selected layout; a new dated one only when none is selected. */
 function quickSave(): void {
-  const name = currentLayoutName ?? `Layout ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`
-  const m = loadSaved()
-  m[name] = snapshot()
-  persistSaved(m)
-  currentLayoutName = name
-  try {
-    localStorage.setItem('candl.currentLayoutName', JSON.stringify(name))
-  } catch {
-    /* storage unavailable */
-  }
-  flashToast(`Saved “${name}”. Rename or load it from Layouts.`)
+  const existing = currentLayoutName !== null && currentLayoutName in loadSaved()
+  const name = existing ? (currentLayoutName as string) : `Layout ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`
+  saveLayoutAs(name)
+  flashToast(existing ? `Saved “${name}”.` : `Saved as new layout “${name}”. Rename or load it from Layouts.`)
 }
 function buildSave(): HTMLElement {
   const b = el('button', { class: 'tv-btn save-btn', title: 'Save layout (⌘S)' })

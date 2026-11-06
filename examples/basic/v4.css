@@ -1423,3 +1423,38 @@ body {
     white-space: nowrap;
   }
 }
+
+/* Layouts menu: the selected saved layout (Save writes into it) */
+.dd-menu .menu-item.sel {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.dd-menu .menu-item.sel .mi-check {
+  color: var(--accent);
+}
+.dd-menu .save-row .save-current {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Layouts menu sits near the right edge: open it leftwards, keep the save rows on one line */
+.saved-dd .dd-menu {
+  left: auto;
+  right: 0;
+  min-width: 300px;
+}
+.saved-dd .save-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.saved-dd .save-row .menu-search {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.saved-dd .save-row .btn {
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
