@@ -1344,6 +1344,21 @@ function openDeepProfileSettings(p: ChartPane): void {
           modalColorField(body, 'Valley color', o.valleyColor, (v) => set({ valleyColor: v }))
           modalNumField(body, 'Sensitivity (higher = fewer, stronger nodes)', o.sensitivity, 1, 10, 1, (v) => set({ sensitivity: Math.round(v) }))
           modalCheckField(body, 'Extend node lines till end of window', o.extendNodes, (v) => set({ extendNodes: v }))
+          head(body, 'HVN / LVN zones (Latest / Multiple)')
+          modalCheckField(body, 'Show zones (session → extended into the next)', o.zonesEnable, (v) => set({ zonesEnable: v }))
+          modalSelectField(body, 'Zones from', o.zonesScope, [
+            ['previous', 'Previous session only (yesterday → today)'],
+            ['every', 'Every session (each → the next)'],
+          ], (v) => set({ zonesScope: v as DeepProfileOptions['zonesScope'] }))
+          modalCheckField(body, 'HVN zones (high volume)', o.showHvnZones, (v) => set({ showHvnZones: v }))
+          modalColorField(body, 'HVN color', o.hvnZoneColor, (v) => set({ hvnZoneColor: v }))
+          modalCheckField(body, 'LVN zones (low volume)', o.showLvnZones, (v) => set({ showLvnZones: v }))
+          modalColorField(body, 'LVN color', o.lvnZoneColor, (v) => set({ lvnZoneColor: v }))
+          modalNumField(body, 'Node prominence (% of POC, higher = fewer)', o.zoneProminencePct, 1, 50, 1, (v) => set({ zoneProminencePct: v }))
+          modalNumField(body, 'Band width (% of node height / dip)', o.zoneWidthPct, 10, 90, 5, (v) => set({ zoneWidthPct: v }))
+          modalNumField(body, 'Zone smoothing (shared with peak/valley sensitivity)', o.sensitivity, 1, 10, 1, (v) => set({ sensitivity: Math.round(v) }))
+          modalNumField(body, 'Max zones of each kind', o.zonesMax, 1, 10, 1, (v) => set({ zonesMax: Math.round(v) }))
+          modalCheckField(body, 'Zone labels (price range · delta)', o.zoneLabels, (v) => set({ zoneLabels: v }))
         },
       },
       {

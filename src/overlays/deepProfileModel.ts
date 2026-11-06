@@ -328,6 +328,8 @@ export interface DpProfile {
   developing: [number, number][]
   peaks: number[]
   valleys: number[]
+  /** HVN / LVN bands (empty unless requested). */
+  zones: DpNodeZone[]
   /** For custom profiles: its index in the custom range list. */
   customIndex?: number
 }
@@ -338,6 +340,8 @@ export interface DpBuildOptions {
   /** 1 (every bump) … 10 (only the largest nodes). */
   sensitivity: number
   detectNodes: boolean
+  /** HVN / LVN zones to compute, or null for none. */
+  zones?: DpZoneOptions | null
 }
 
 const rowOf = (price: number, rowSize: number): number => Math.floor(price / rowSize + 1e-9)
@@ -375,19 +379,7 @@ export function findNodes(metric: ArrayLike<number>, sensitivity: number): { pea
   const n = metric.length
   if (n < 5) return { peaks: [], valleys: [] }
   const radius = Math.max(1, Math.round(sensitivity))
-  const sm = new Float64Array(n)
-  for (let r = 0; r < n; r++) {
-    let s = 0
-    let w = 0
-    for (let k = -radius; k <= radius; k++) {
-      const j = r + k
-      if (j < 0 || j >= n) continue
-      const wk = radius + 1 - Math.abs(k) // triangular kernel
-      s += metric[j] * wk
-      w += wk
-    }
-    sm[r] = s / w
-  }
+  const sm = smoothHist(metric, sensitivity)
   let max = 0
   for (let r = 0; r < n; r++) if (sm[r] > max) max = sm[r]
   if (max <= 0) return { peaks: [], valleys: [] }
@@ -408,6 +400,206 @@ export function findNodes(metric: ArrayLike<number>, sensitivity: number): { pea
     if (lo < peaks[i + 1] && sm[lo] <= 0.7 * Math.min(sm[peaks[i]], sm[peaks[i + 1]])) valleys.push(lo)
   }
   return { peaks, valleys }
+}
+
+/** Triangular-kernel smoothing over ±`sensitivity` rows — the node detectors' view of the histogram. */
+export function smoothHist(metric: ArrayLike<number>, sensitivity: number): Float64Array {
+  const n = metric.length
+  const radius = Math.max(1, Math.round(sensitivity))
+  const sm = new Float64Array(n)
+  for (let r = 0; r < n; r++) {
+    let s = 0
+    let w = 0
+    for (let k = -radius; k <= radius; k++) {
+      const j = r + k
+      if (j < 0 || j >= n) continue
+      const wk = radius + 1 - Math.abs(k)
+      s += metric[j] * wk
+      w += wk
+    }
+    sm[r] = s / w
+  }
+  return sm
+}
+
+/** An HVN or LVN band of a profile. */
+export interface DpNodeZone {
+  kind: 'hvn' | 'lvn'
+  /** Price band [lo, hi]. */
+  lo: number
+  hi: number
+  /** Volume and net delta (buy − sell) inside the band. */
+  volume: number
+  delta: number
+  /** Ranking: HVN = share of the profile's volume; LVN = how far below the HVN threshold it dips (0..1). */
+  score: number
+}
+
+export interface DpZoneOptions {
+  /** A node must stand out by at least this share of the POC bin's volume (0..1). */
+  prominence: number
+  /** Band width: HVN = where volume stays above (1 − width) of the node's height; LVN = the lowest `width` of its dip (0..1). */
+  width: number
+  /** Keep at most this many of each kind (strongest first). */
+  maxEach: number
+}
+
+/** Zones are found on a fixed grid of this many price bins per profile, so they don't change with zoom. */
+export const ZONE_BINS = 100
+
+/**
+ * HVN / LVN zones over a histogram (bin r covers [lo0 + r·step, lo0 + (r+1)·step)),
+ * smoothed over ±`sensitivity` bins, by topographic prominence:
+ *   - HVN: a local high whose prominence (its height above the lowest point
+ *     separating it from any higher bin) is ≥ `prominence` × the POC bin. Its
+ *     band is where volume stays above height − width × prominence, never
+ *     past the valleys either side.
+ *   - LVN: the low between two adjacent HVNs, kept when it dips ≥
+ *     `prominence` × POC below the smaller of the two. Its band is the
+ *     bottom `width` of that dip. Thin tails (outside the outermost HVNs)
+ *     are never LVNs.
+ */
+export function findZones(buy: ArrayLike<number>, sell: ArrayLike<number>, lo0: number, step: number, sensitivity: number, o: DpZoneOptions): DpNodeZone[] {
+  const n = buy.length
+  const tot = new Float64Array(n)
+  let total = 0
+  for (let r = 0; r < n; r++) {
+    tot[r] = buy[r] + sell[r]
+    total += tot[r]
+  }
+  if (n < 5 || total <= 0) return []
+  const sm = smoothHist(tot, sensitivity)
+  let max = 0
+  for (let r = 0; r < n; r++) max = Math.max(max, sm[r])
+  if (max <= 0) return []
+  const minProm = o.prominence * max
+
+  // local highs (plateaus count once, at their first bin) and their prominence
+  const peaks: { r: number; prom: number }[] = []
+  for (let r = 0; r < n; r++) {
+    const left = r > 0 ? sm[r - 1] : -Infinity
+    let k = r
+    while (k + 1 < n && sm[k + 1] === sm[r]) k++
+    const right = k + 1 < n ? sm[k + 1] : -Infinity
+    if (sm[r] > left && sm[r] > right) {
+      let lMin = sm[r]
+      for (let j = r - 1; j >= 0 && sm[j] <= sm[r]; j--) lMin = Math.min(lMin, sm[j])
+      const lHigher = r > 0 && [...Array(r).keys()].some((j) => sm[j] > sm[r])
+      let rMin = sm[r]
+      for (let j = k + 1; j < n && sm[j] <= sm[r]; j++) rMin = Math.min(rMin, sm[j])
+      const rHigher = sm.slice(k + 1).some((v) => v > sm[r])
+      // the key col is on the side that leads to higher ground; the POC uses its own height
+      const base = lHigher && rHigher ? Math.max(lMin, rMin) : lHigher ? lMin : rHigher ? rMin : 0
+      const prom = sm[r] - base
+      if (prom >= minProm) peaks.push({ r, prom })
+    }
+    r = k
+  }
+
+  const band = (kind: 'hvn' | 'lvn', r0: number, r1: number, score: number): DpNodeZone => {
+    let volume = 0
+    let delta = 0
+    for (let r = r0; r <= r1; r++) {
+      volume += tot[r]
+      delta += buy[r] - sell[r]
+    }
+    return { kind, lo: lo0 + r0 * step, hi: lo0 + (r1 + 1) * step, volume, delta, score }
+  }
+
+  // valleys between adjacent kept peaks
+  const valleys: { r: number; depth: number }[] = []
+  for (let i = 0; i + 1 < peaks.length; i++) {
+    const a = peaks[i].r
+    const b = peaks[i + 1].r
+    let v = a + 1
+    for (let r = a + 1; r < b; r++) if (sm[r] < sm[v]) v = r
+    const depth = Math.min(sm[a], sm[b]) - sm[v]
+    if (v < b && depth >= minProm) valleys.push({ r: v, depth })
+  }
+
+  // LVN bands first; HVN bands then stop at them, so the two never overlap
+  const blocked = new Uint8Array(n)
+  const lvns = valleys.map(({ r: v, depth }) => {
+    const a = Math.max(...peaks.filter((p) => p.r < v).map((p) => p.r))
+    const b = Math.min(...peaks.filter((p) => p.r > v).map((p) => p.r))
+    const ceil = sm[v] + o.width * depth
+    let lo = v
+    let hi = v
+    while (lo - 1 > a && sm[lo - 1] <= ceil) lo--
+    while (hi + 1 < b && sm[hi + 1] <= ceil) hi++
+    for (let r = lo; r <= hi; r++) blocked[r] = 1
+    return band('lvn', lo, hi, depth / max)
+  })
+  const spans: [number, number][] = peaks
+    .map(({ r: p, prom }): [number, number] => {
+      const floor = sm[p] - o.width * prom
+      let lo = p
+      let hi = p
+      while (lo - 1 >= 0 && !blocked[lo - 1] && sm[lo - 1] >= floor) lo--
+      while (hi + 1 < n && !blocked[hi + 1] && sm[hi + 1] >= floor) hi++
+      return [lo, hi]
+    })
+    .sort((x, y) => x[0] - y[0])
+  // two highs without a deep enough dip between them can overlap: one band
+  const merged: [number, number][] = []
+  for (const s of spans) {
+    const last = merged[merged.length - 1]
+    if (last && s[0] <= last[1] + 1) last[1] = Math.max(last[1], s[1])
+    else merged.push([s[0], s[1]])
+  }
+  const hvns = merged.map(([lo, hi]) => {
+    const z = band('hvn', lo, hi, 0)
+    z.score = z.volume / total
+    return z
+  })
+  const keep = (zs: DpNodeZone[]): DpNodeZone[] => zs.sort((x, y) => y.score - x.score).slice(0, Math.max(0, o.maxEach))
+  return [...keep(hvns), ...keep(lvns)].sort((x, y) => x.lo - y.lo)
+}
+
+/** Buy / sell histogram of `buckets` on `bins` equal price bins over their full range (zone detection's fixed grid). */
+export function zoneHistogram(buckets: DpBucket[], bins: number): { lo0: number; step: number; buy: Float64Array; sell: Float64Array } | null {
+  let pMin = Infinity
+  let pMax = -Infinity
+  for (const b of buckets) {
+    if (b.est) {
+      if (b.estBuy + b.estSell <= 0) continue
+      pMin = Math.min(pMin, b.lo)
+      pMax = Math.max(pMax, b.hi)
+    } else if (b.prices.length) {
+      pMin = Math.min(pMin, b.prices[0])
+      pMax = Math.max(pMax, b.prices[b.prices.length - 1])
+    }
+  }
+  if (!isFinite(pMin) || pMax <= pMin) return null
+  const step = (pMax - pMin) / bins
+  const binOf = (p: number): number => Math.max(0, Math.min(bins - 1, Math.floor((p - pMin) / step)))
+  const buy = new Float64Array(bins)
+  const sell = new Float64Array(bins)
+  for (const b of buckets) {
+    if (b.est) {
+      if (b.estBuy + b.estSell <= 0) continue
+      const r0 = binOf(b.lo)
+      const r1 = binOf(b.hi)
+      const k = r1 - r0 + 1
+      for (let r = r0; r <= r1; r++) {
+        buy[r] += b.estBuy / k
+        sell[r] += b.estSell / k
+      }
+    } else {
+      for (let i = 0; i < b.prices.length; i++) {
+        const r = binOf(b.prices[i])
+        buy[r] += b.buy[i]
+        sell[r] += b.sell[i]
+      }
+    }
+  }
+  return { lo0: pMin, step, buy, sell }
+}
+
+/** HVN / LVN zones of a set of buckets, on the fixed ZONE_BINS grid. */
+export function profileZones(buckets: DpBucket[], sensitivity: number, o: DpZoneOptions): DpNodeZone[] {
+  const h = zoneHistogram(buckets, ZONE_BINS)
+  return h ? findZones(h.buy, h.sell, h.lo0, h.step, sensitivity, o) : []
 }
 
 /** Accumulate `buckets` into one profile. Returns null when it holds nothing. */
@@ -483,6 +675,7 @@ export function buildProfile(buckets: DpBucket[], start: number, end: number, ba
     estShare: estTotal / total,
     developing,
     ...nodes,
+    zones: o.zones ? profileZones(buckets, o.sensitivity, o.zones) : [],
   }
 }
 

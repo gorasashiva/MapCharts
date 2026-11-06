@@ -4,8 +4,11 @@
  * lives in deepProfileModel.ts; this file loads the data, keeps it current
  * and draws it.
  *
- *   VBP type     Volume · Ask/Bid · Delta · Delta + Volume (delta left of the
- *                profile's axis, total volume right)
+ *   VBP type     Volume · Ask/Bid (bid then ask, end to end) · Delta ·
+ *                Delta + Volume (a delta strip at the session edge, an axis,
+ *                then total volume on into the session). Every type starts at
+ *                the chosen side of its session (Profile side) or pane edge
+ *                (Composite / Visible placement).
  *   VBP period   Latest · Multiple (one per period) · Composite (all loaded
  *                data) · Visible (follows the viewport) · Custom (ranges
  *                drawn with the mouse)
@@ -61,6 +64,8 @@ import {
 const TAG_SOURCE = 'deepProfile'
 const DAY_MS = 86_400_000
 const RECOMPUTE_MS = 250
+/** Delta + Volume: share of the bar length given to the delta strip at the session edge. */
+const DV_DELTA_SHARE = 0.35
 
 type Rect = { x: number; y: number; width: number; height: number }
 
@@ -116,6 +121,22 @@ export interface DeepProfileOptions {
   /** 1 (every bump) … 10 (only the main nodes). */
   sensitivity: number
   extendNodes: boolean
+  // ---- HVN / LVN zones (Latest / Multiple) ----
+  /** Bands from a session's profile, drawn over it and extended through the next session. */
+  zonesEnable: boolean
+  /** 'previous' = only the last completed session's zones (into today); 'every' = each session's into the one after. */
+  zonesScope: 'previous' | 'every'
+  showHvnZones: boolean
+  showLvnZones: boolean
+  hvnZoneColor: string
+  lvnZoneColor: string
+  /** A node must stand out by at least this % of the POC's volume (higher = fewer, bigger zones). */
+  zoneProminencePct: number
+  /** Band width as % of the node's height (HVN) or dip (LVN). */
+  zoneWidthPct: number
+  /** Strongest N of each kind per session. */
+  zonesMax: number
+  zoneLabels: boolean
   // ---- appearance ----
   volumeColor: string
   askColor: string
@@ -172,6 +193,16 @@ export const DEEP_PROFILE_DEFAULTS: DeepProfileOptions = {
   valleyColor: '#0ecb81',
   sensitivity: 3,
   extendNodes: false,
+  zonesEnable: false,
+  zonesScope: 'previous',
+  showHvnZones: true,
+  showLvnZones: true,
+  hvnZoneColor: '#f0a020',
+  lvnZoneColor: '#8f7cff',
+  zoneProminencePct: 8,
+  zoneWidthPct: 50,
+  zonesMax: 3,
+  zoneLabels: true,
   volumeColor: '#8a94a6',
   askColor: '#0ecb81',
   bidColor: '#f6465d',
@@ -242,6 +273,8 @@ export default class DeepProfileOverlay {
   private dirtyFrom = -Infinity
   private bucketsVersion = 0
   private profiles: DpProfile[] = []
+  /** Latest mode with zones: the session before the drawn one (zones only, not drawn). */
+  private prevProfile: DpProfile | null = null
   /** Base periods of every profile in order (Multiple / Latest) — for merge/split neighbours. */
   private groupsBases: number[][] = []
   private profilesKey = ''
@@ -604,13 +637,17 @@ export default class DeepProfileOverlay {
     const visKey = o.period === 'visible' ? `${Math.round(conv.xToTime(rect.x))}|${Math.round(conv.xToTime(rect.x + rect.width))}` : ''
     const key = [
       this.bucketsVersion, rs, o.period, o.lengthType, o.lengthValue, o.splitMode, o.splitZone, o.split1, o.split2,
-      o.valueAreaPct, o.sensitivity, o.showPeaks || o.showValleys, o.joined.join(','), o.customRanges.map((r) => r.join('-')).join(','), visKey,
+      o.valueAreaPct, o.sensitivity, o.showPeaks || o.showValleys, o.joined.join(','),
+      o.zonesEnable, o.zoneProminencePct, o.zoneWidthPct, o.zonesMax, o.customRanges.map((r) => r.join('-')).join(','), visKey,
       this.anchorNyHour, this.anchorUtcHour,
     ].join('|')
     if (key === this.profilesKey) return
     this.profilesKey = key
     const b = this.buckets
-    const opt = (size: number) => ({ rowSize: size, valueAreaPct: o.valueAreaPct, sensitivity: o.sensitivity, detectNodes: o.showPeaks || o.showValleys })
+    const dayZones = o.zonesEnable && (o.period === 'multiple' || o.period === 'latest')
+    const zoneOpts = dayZones ? { prominence: o.zoneProminencePct / 100, width: o.zoneWidthPct / 100, maxEach: o.zonesMax } : null
+    const opt = (size: number) => ({ rowSize: size, valueAreaPct: o.valueAreaPct, sensitivity: o.sensitivity, detectNodes: o.showPeaks || o.showValleys, zones: zoneOpts })
+    this.prevProfile = null
     // a profile with too many rows for its row size comes back null: retry coarser
     const build = (bs: DpBucket[], start: number, end: number, bases: number[]): DpProfile | null => {
       for (let k = 0; k < 6; k++) {
@@ -643,12 +680,15 @@ export default class DeepProfileOverlay {
     } else {
       const groups = groupPeriods(b, this.clock(), new Set(o.joined))
       this.groupsBases = groups.map((g) => g.bases)
-      const first = o.period === 'latest' ? groups.length - 1 : 0
+      // Latest still builds the session before it when zones are on (its zones extend into today)
+      const first = o.period === 'latest' ? groups.length - (dayZones ? 2 : 1) : 0
       for (let gi = Math.max(0, first); gi < groups.length; gi++) {
         const g = groups[gi]
         const end = gi + 1 < groups.length ? groups[gi + 1].bases[0] : dataEnd
         const p = build(b.slice(g.i0, g.i1), g.bases[0], end, g.bases)
-        if (p) out.push(p)
+        if (!p) continue
+        if (o.period === 'latest' && gi < groups.length - 1) this.prevProfile = p
+        else out.push(p)
       }
     }
     this.profiles = out
@@ -694,6 +734,7 @@ export default class DeepProfileOverlay {
     ctx.clip()
     const side = this.opts.period === 'composite' || this.opts.period === 'visible'
     const slot = this.slotWidth(conv)
+    if (this.opts.zonesEnable) this.drawZones(conv, rect, slot)
     for (const p of this.profiles) {
       let box: { x0: number; x1: number; dir: 1 | -1 }
       if (side) {
@@ -711,6 +752,77 @@ export default class DeepProfileOverlay {
     }
     ctx.restore()
     this.updateTag()
+  }
+
+  /**
+   * HVN / LVN bands of a session's profile, drawn across that session and on
+   * through the next one (the live session's run to the chart's right edge).
+   * 'previous' scope: only the last completed session's, i.e. yesterday's
+   * zones carried through today.
+   */
+  private drawZones(conv: Converters, rect: Rect, slot: number): void {
+    const o = this.opts
+    if (o.period !== 'multiple' && o.period !== 'latest') return
+    const seq = o.period === 'latest' ? [this.prevProfile, ...this.profiles].filter((p): p is DpProfile => p !== null) : this.profiles
+    if (seq.length === 0) return
+    const right = rect.x + rect.width
+    const sources = o.zonesScope === 'previous' ? (seq.length >= 2 ? [seq.length - 2] : []) : seq.map((_, i) => i)
+    const ctx = this.ctx
+    const tick = o.tickSize > 0 ? o.tickSize : this.symbolTick
+    const dp = Math.max(0, Math.min(6, -Math.floor(Math.log10(tick) + 1e-9)))
+    const fmtP = (v: number): string => v.toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp })
+    const xOf = (t: number): number => conv.timeToX(t) - slot / 2
+    ctx.font = '600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    ctx.textBaseline = 'middle'
+    ctx.textAlign = 'left'
+    for (const k of sources) {
+      const p = seq[k]
+      const next = seq[k + 1]
+      const x0 = Math.max(rect.x, xOf(p.start))
+      // through the next session; the live (last) one runs on to the chart's right edge
+      const x1 = !next || k + 1 === seq.length - 1 ? right : Math.min(right, xOf(next.end))
+      if (x1 <= x0 || x1 < rect.x) continue
+      // label where the zone enters the next session, else at its own start when that's too close to the edge
+      const enter = next ? Math.max(rect.x, xOf(next.start)) : x0
+      const labelX = (right - enter >= 230 ? enter : x0) + 4
+      const prefix = k === seq.length - 2 ? 'PD ' : ''
+      for (const z of p.zones) {
+        const hvn = z.kind === 'hvn'
+        if (hvn ? !o.showHvnZones : !o.showLvnZones) continue
+        const { lo, hi } = z
+        const yTop = conv.priceToY(hi)
+        const yBot = conv.priceToY(lo)
+        const y = Math.min(yTop, yBot)
+        const h = Math.max(1, Math.abs(yBot - yTop))
+        if (y > rect.y + rect.height || y + h < rect.y) continue
+        const color = hvn ? o.hvnZoneColor : o.lvnZoneColor
+        ctx.globalAlpha = hvn ? 0.14 : 0.11
+        ctx.fillStyle = color
+        ctx.fillRect(x0, y, x1 - x0, h)
+        ctx.globalAlpha = 0.85
+        ctx.strokeStyle = color
+        ctx.lineWidth = 1
+        ctx.setLineDash(hvn ? [] : [4, 3])
+        ctx.beginPath()
+        ctx.moveTo(x0, Math.round(y) + 0.5)
+        ctx.lineTo(x1, Math.round(y) + 0.5)
+        ctx.moveTo(x0, Math.round(y + h) - 0.5)
+        ctx.lineTo(x1, Math.round(y + h) - 0.5)
+        ctx.stroke()
+        ctx.setLineDash([])
+        ctx.globalAlpha = 1
+        if (o.zoneLabels) {
+          const text = `${prefix}${hvn ? 'HVN' : 'LVN'} ${fmtP(lo)}–${fmtP(hi)} · Δ ${signed(z.delta)}`
+          const ty = h >= 14 ? y + h / 2 : y - 7
+          const tw = ctx.measureText(text).width
+          const lx = Math.max(rect.x + 4, Math.min(labelX, right - tw - 6)) // keep it on the chart
+          ctx.fillStyle = 'rgba(14,16,22,0.82)' // readable over the profile bars
+          ctx.fillRect(lx - 3, ty - 7, tw + 6, 14)
+          ctx.fillStyle = color
+          ctx.fillText(text, lx, ty)
+        }
+      }
+    }
   }
 
   private slotWidth(conv: Converters): number {
@@ -738,19 +850,20 @@ export default class DeepProfileOverlay {
     if (r0 > r1) return
 
     let maxTot = 0
-    let maxSide = 0
     let maxAbsD = 0
     for (let r = 0; r < n; r++) {
       const t = p.buy[r] + p.sell[r]
       if (t > maxTot) maxTot = t
-      maxSide = Math.max(maxSide, p.buy[r], p.sell[r])
       maxAbsD = Math.max(maxAbsD, Math.abs(p.buy[r] - p.sell[r]))
     }
     if (maxTot <= 0) return
 
-    const twoSided = o.vbpType === 'bidask' || o.vbpType === 'deltaVolume'
-    const axis = box.x0 + boxW / 2
-    const half = L / 2
+    const deltaVolume = o.vbpType === 'deltaVolume'
+    // Delta + Volume hugs the session edge too: a delta strip at the edge, the
+    // axis just inside it, volume growing on into the session.
+    const deltaLen = L * DV_DELTA_SHARE
+    const volLen = L - deltaLen
+    const axis = box.dir === 1 ? box.x0 + deltaLen : box.x1 - deltaLen
     const anchor = box.dir === 1 ? box.x0 : box.x1
     const rowPx = Math.abs(yOf(p.rowLo + p.rowSize) - yOf(p.rowLo))
     const labelRows = o.showValues && rowPx >= 9
@@ -787,29 +900,33 @@ export default class DeepProfileOverlay {
         labelX = anchor + w
         label = signed(delta)
       } else if (o.vbpType === 'bidask') {
-        bar(axis, -(sell / maxSide) * half, o.bidColor)
-        bar(axis, (buy / maxSide) * half, o.askColor)
+        // bid then ask, end to end from the anchor: the row's length is its volume
+        const bw = (sell / maxTot) * L * box.dir
+        const aw = (buy / maxTot) * L * box.dir
+        bar(anchor, bw, o.bidColor)
+        bar(anchor + bw, aw, o.askColor)
+        labelX = anchor + bw + aw
+        label = `${fmtNum(sell)}×${fmtNum(buy)}`
       } else {
-        bar(axis, maxAbsD > 0 ? -(Math.abs(delta) / maxAbsD) * half : 0, delta >= 0 ? o.askColor : o.bidColor)
-        bar(axis, (tot / maxTot) * half, o.volumeColor)
+        // Delta + Volume: delta toward the session edge, total volume on into the session
+        bar(axis, maxAbsD > 0 ? -(Math.abs(delta) / maxAbsD) * deltaLen * box.dir : 0, delta >= 0 ? o.askColor : o.bidColor)
+        bar(axis, (tot / maxTot) * volLen * box.dir, o.volumeColor)
       }
       ctx.globalAlpha = 1
       if (labelRows) {
         ctx.fillStyle = '#d1d4dc'
-        if (twoSided) {
-          const lv = o.vbpType === 'bidask' ? fmtNum(sell) : signed(delta)
-          const rv = o.vbpType === 'bidask' ? fmtNum(buy) : fmtNum(tot)
-          ctx.textAlign = 'right'
-          ctx.fillText(lv, axis - 3, y + h / 2)
-          ctx.textAlign = 'left'
-          ctx.fillText(rv, axis + 3, y + h / 2)
+        if (deltaVolume) {
+          ctx.textAlign = box.dir === 1 ? 'right' : 'left'
+          ctx.fillText(signed(delta), axis - 3 * box.dir, y + h / 2)
+          ctx.textAlign = box.dir === 1 ? 'left' : 'right'
+          ctx.fillText(fmtNum(tot), axis + 3 * box.dir, y + h / 2)
         } else {
           ctx.textAlign = box.dir === 1 ? 'left' : 'right'
           ctx.fillText(label, labelX + 3 * box.dir, y + h / 2)
         }
       }
     }
-    if (twoSided) {
+    if (deltaVolume) {
       ctx.strokeStyle = 'rgba(160,165,180,0.35)'
       ctx.lineWidth = 1
       ctx.beginPath()

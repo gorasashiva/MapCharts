@@ -6,6 +6,7 @@ import {
   buildProfile,
   editJoins,
   findNodes,
+  findZones,
   groupPeriods,
   mergeSpans,
   parseHhMm,
@@ -201,6 +202,59 @@ describe('valueArea / findNodes', () => {
     expect(low.valleys[0]).toBeLessThan(10)
     const high = findNodes(m, 6)
     expect(high.peaks.length).toBeLessThanOrEqual(1)
+  })
+})
+
+describe('findZones', () => {
+  // two volume humps (rows 2-4 and 9-11) with a thin gap between; buyers dominate the upper hump
+  const tot = [1, 2, 8, 10, 8, 2, 1, 1, 2, 7, 9, 7, 2, 1]
+  const buy = tot.map((v, r) => (r >= 8 ? v * 0.75 : v * 0.4))
+  const sell = tot.map((v, r) => v - buy[r])
+  const o = { prominence: 0.08, width: 0.5, maxEach: 3 }
+
+  it('finds an HVN band on each hump and an LVN between them, in prices, with volume and delta', () => {
+    // bin r = [100 + r, 101 + r). Smoothed (±1 bin): peaks 9 at bin 3 and 8 at bin 10, the dip
+    // between bottoms at 1.25 (bin 6) → LVN = bins ≤ 1.25 + 0.5×6.75 = bins 5–8; HVNs stop at it.
+    const zs = findZones(buy, sell, 100, 1, 1, o)
+    const hvns = zs.filter((z) => z.kind === 'hvn')
+    const lvns = zs.filter((z) => z.kind === 'lvn')
+    expect(hvns.map((z) => [z.lo, z.hi])).toEqual([
+      [102, 105],
+      [109, 112],
+    ])
+    expect(lvns.map((z) => [z.lo, z.hi])).toEqual([[105, 109]])
+    expect(hvns[0].volume).toBeCloseTo(26)
+    expect(hvns[0].delta).toBeLessThan(0) // sellers on the lower hump
+    expect(hvns[1].delta).toBeGreaterThan(0) // buyers on the upper hump
+    expect(lvns[0].score).toBeCloseTo(0.75)
+  })
+
+  it('drops nodes below the prominence, never makes the thin tails LVNs, and caps zones per kind', () => {
+    const zs = findZones(buy, sell, 100, 1, 1, { ...o, maxEach: 1 })
+    expect(zs.filter((z) => z.kind === 'hvn')).toHaveLength(1)
+    expect(zs.filter((z) => z.kind === 'lvn').every((z) => z.lo > 104 && z.hi < 110)).toBe(true)
+    // the upper hump stands 6.75 above the dip = 75% of the POC: a 0.8 prominence leaves one HVN and no LVN
+    const strict = findZones(buy, sell, 100, 1, 1, { ...o, prominence: 0.8 })
+    expect(strict.map((z) => z.kind)).toEqual(['hvn'])
+    // one hump only: no LVN anywhere
+    expect(findZones([1, 2, 9, 2, 1, 0.5], [0, 0, 0, 0, 0, 0], 0, 1, 1, o).filter((z) => z.kind === 'lvn')).toEqual([])
+    expect(findZones([1, 1], [1, 1], 0, 1, 1, o)).toEqual([])
+  })
+
+  it('is attached to built profiles only when asked for, independent of the row size', () => {
+    const t0 = utc('2026-07-09T10:00:00')
+    const units = tot.flatMap((v, r) => [print(t0 + r, 100 + r + 0.5, buy[r], 'buy'), print(t0 + r, 100 + r + 0.5, sell[r], 'sell')])
+    units.sort((a, b) => a.time - b.time)
+    const b = buildBuckets([candle(t0, 100, 114, 100, 110, 0)], units, [[t0, t0 + MIN]], MIN, { countTrades: false, minFilter: 0, maxFilter: 0 })
+    expect(buildProfile(b, t0, t0 + MIN, [t0], opts)!.zones).toEqual([])
+    const z1 = buildProfile(b, t0, t0 + MIN, [t0], { ...opts, sensitivity: 5, zones: o })!.zones
+    const z2 = buildProfile(b, t0, t0 + MIN, [t0], { ...opts, rowSize: 2, sensitivity: 5, zones: o })!.zones
+    expect(z1.length).toBeGreaterThan(0)
+    expect(z2).toEqual(z1)
+    for (const z of z1) {
+      expect(z.lo).toBeGreaterThanOrEqual(100.5)
+      expect(z.hi).toBeLessThanOrEqual(113.5 + 1e-9)
+    }
   })
 })
 
