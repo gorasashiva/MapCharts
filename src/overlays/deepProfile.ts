@@ -126,6 +126,8 @@ export interface DeepProfileOptions {
   /** Composite / Visible: profile width as a share of the pane, and which edge. */
   sideWidthPct: number
   placement: DpPlacement
+  /** Latest / Multiple / Custom: bars grow from the session's start (left) or end (right). */
+  periodAlign: DpPlacement
   showValues: boolean
   showTotals: boolean
   // ---- persisted edits ----
@@ -177,6 +179,7 @@ export const DEEP_PROFILE_DEFAULTS: DeepProfileOptions = {
   fillPct: 0.9,
   sideWidthPct: 0.2,
   placement: 'right',
+  periodAlign: 'left',
   showValues: false,
   showTotals: true,
   joined: [],
@@ -702,7 +705,7 @@ export default class DeepProfileOverlay {
         if (x1 < rect.x || x0 > rect.x + rect.width) continue
         // Sticky: a period that began off-screen draws from the pane's left
         // edge, so a long profile (a day on a 1m chart) stays readable.
-        box = { x0: Math.max(x0, rect.x), x1: Math.min(x1, rect.x + rect.width), dir: 1 }
+        box = { x0: Math.max(x0, rect.x), x1: Math.min(x1, rect.x + rect.width), dir: this.opts.periodAlign === 'right' ? -1 : 1 }
       }
       this.drawProfile(conv, rect, p, box, slot)
     }

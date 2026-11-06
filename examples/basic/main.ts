@@ -1354,6 +1354,10 @@ function openDeepProfileSettings(p: ChartPane): void {
           modalColorField(body, 'Ask / buy (+delta)', o.askColor, (v) => set({ askColor: v }))
           modalColorField(body, 'Bid / sell (−delta)', o.bidColor, (v) => set({ bidColor: v }))
           modalNumField(body, 'Opacity', o.alpha, 0.1, 1, 0.05, (v) => set({ alpha: v }))
+          modalSelectField(body, 'Profile side (one per period)', o.periodAlign, [
+            ['left', 'Left — bars grow from the session start'],
+            ['right', 'Right — bars grow back from the session end'],
+          ], (v) => set({ periodAlign: v as DeepProfileOptions['periodAlign'] }))
           modalNumField(body, 'Bar length (share of period)', o.fillPct, 0.2, 1, 0.05, (v) => set({ fillPct: v }))
           modalNumField(body, 'Composite / Visible width (share of pane)', o.sideWidthPct, 0.05, 0.6, 0.01, (v) => set({ sideWidthPct: v }))
           modalSelectField(body, 'Composite / Visible placement', o.placement, [
