@@ -86,8 +86,12 @@ export interface DeepProfileOptions {
   /** Ignore units smaller / larger than this (base-asset qty, 0 = off). */
   minFilter: number
   maxFilter: number
-  /** Days of recorded tape to load (exact history). */
+  /** Days of recorded tape preloaded when turned on (exact history; more loads as you scroll, see loadVisible). */
   daysToLoad: number
+  /** Fetch the recorded tape for the sessions on screen as you scroll / zoom. */
+  loadVisible: boolean
+  /** Most days of tape held at once (memory); the days farthest from the screen are dropped first. */
+  maxTapeDays: number
   // ---- rows ----
   autoGrouping: boolean
   /** Auto: target pixels per row before snapping to a tick multiple. */
@@ -174,6 +178,8 @@ export const DEEP_PROFILE_DEFAULTS: DeepProfileOptions = {
   minFilter: 0,
   maxFilter: 0,
   daysToLoad: 2,
+  loadVisible: true,
+  maxTapeDays: 6,
   autoGrouping: true,
   autoRowPx: 6,
   manualTicks: 1,
@@ -272,6 +278,15 @@ export default class DeepProfileOverlay {
   private builder: ClusterBuilder | null = null
   private loadGen = 0
   private loading = false
+  /** Recorded tape by UTC day start: loading or loaded. */
+  private tapeDays = new Map<number, 'loading' | 'done'>()
+  /** Days waiting to be fetched, most wanted first. */
+  private tapeQueue: number[] = []
+  private pumping = false
+  private lastEnsure = 0
+  private ensureKey = ''
+  /** Centre of the visible range (eviction keeps the days nearest to it). */
+  private focusTime = Date.now()
 
   // ---- derived ----
   private buckets: DpBucket[] = []
@@ -338,6 +353,12 @@ export default class DeepProfileOverlay {
     if ('input' in patch && patch.input !== prev.input) this.rebuildUnits()
     if (BUCKET_KEYS.some((k) => k in patch)) this.dirtyFrom = -Infinity
     if ('daysToLoad' in patch && patch.daysToLoad !== prev.daysToLoad && this.enabled) void this.loadHistory()
+    if ('maxTapeDays' in patch && patch.maxTapeDays !== prev.maxTapeDays) {
+      this.evictDays()
+      this.rebuildUnits()
+      this.ensureKey = ''
+    }
+    if ('loadVisible' in patch) this.ensureKey = ''
     this.profilesKey = ''
   }
 
@@ -369,6 +390,10 @@ export default class DeepProfileOverlay {
     this.loadGen++
     this.prints = []
     this.recordedSpans = []
+    this.tapeDays.clear()
+    this.tapeQueue = []
+    this.pumping = false
+    this.ensureKey = ''
     this.liveFrom = null
     this.units = []
     this.builder = null
@@ -525,34 +550,115 @@ export default class DeepProfileOverlay {
     this.dirtyFrom = -Infinity
   }
 
-  /** Recorded tape for the loaded range, a day at a time (the recorder caps each request). */
+  /** Preload the last `daysToLoad` days (newest first); older sessions load as they come on screen. */
   private async loadHistory(): Promise<void> {
-    const gen = ++this.loadGen
     const now = Date.now()
-    const candles = this.getCandles()
-    const from = Math.max(now - this.opts.daysToLoad * DAY_MS, candles.length ? candles[0].time : 0)
-    this.loading = true
-    const prints: TapePrint[] = []
-    const spans: [number, number][] = []
+    const days: number[] = []
+    for (let k = 0; k < Math.max(1, this.opts.daysToLoad); k++) days.push(Math.floor((now - k * DAY_MS) / DAY_MS) * DAY_MS)
+    // a changed preload count re-fetches today (live may have missed nothing, but the cheap way to be sure)
+    this.requestDays(days)
+  }
+
+  /** Queue UTC days for fetching (in the given priority), then work the queue. */
+  private requestDays(days: number[]): void {
+    const want = days.filter((d) => !this.tapeDays.has(d))
+    if (!want.length) return
+    this.tapeQueue = [...want, ...this.tapeQueue.filter((d) => !want.includes(d))]
+    void this.pump()
+  }
+
+  /** Fetch queued days one at a time (the recorder caps each request), folding each into the tape. */
+  private async pump(): Promise<void> {
+    if (this.pumping) return
+    this.pumping = true
+    const gen = this.loadGen
     try {
-      for (let t = from; t < now; t += DAY_MS) {
-        const chunk: RecordedTape | null = await this.fetchTape(t, Math.min(now, t + DAY_MS)).catch(() => null)
+      while (this.tapeQueue.length && gen === this.loadGen && this.enabled) {
+        const day = this.tapeQueue.shift() as number
+        if (this.tapeDays.has(day)) continue
+        this.tapeDays.set(day, 'loading')
+        this.loading = true
+        const now = Date.now()
+        const chunk: RecordedTape | null = await this.fetchTape(day, Math.min(now, day + DAY_MS)).catch(() => null)
         if (gen !== this.loadGen) return
-        if (!chunk) continue
-        for (const [time, price, qty, side] of chunk.prints) prints.push({ tUs: time * 1000, price, qty, side: side > 0 ? 'buy' : 'sell' })
-        for (const s of chunk.sessions) spans.push([s[0], s[1]])
+        this.tapeDays.set(day, 'done')
+        if (chunk) this.mergeDay(day, chunk)
+        this.evictDays()
+        this.rebuildUnits()
+        this.profilesKey = ''
       }
     } finally {
-      if (gen === this.loadGen) this.loading = false
+      if (gen === this.loadGen) {
+        this.pumping = false
+        this.loading = this.tapeQueue.length > 0
+      }
     }
-    let to = 0
-    for (const s of spans) to = Math.max(to, s[1])
-    if (prints.length) to = Math.max(to, Math.floor(prints[prints.length - 1].tUs / 1000))
-    // live prints after the recorded range stay
-    this.prints = [...prints, ...this.prints.filter((p) => p.tUs / 1000 > to)]
-    this.recordedSpans = mergeSpans(spans)
-    this.rebuildUnits()
-    this.profilesKey = ''
+  }
+
+  /** Put one recorded UTC day into the tape, replacing anything already held for the time it covers (e.g. live prints). */
+  private mergeDay(day: number, chunk: RecordedTape): void {
+    const add: TapePrint[] = chunk.prints.map(([time, price, qty, side]) => ({ tUs: time * 1000, price, qty, side: side > 0 ? 'buy' : 'sell' }))
+    add.sort((a, b) => a.tUs - b.tUs)
+    let to = day
+    for (const ss of chunk.sessions) to = Math.max(to, Math.min(ss[1], day + DAY_MS))
+    if (add.length) to = Math.max(to, Math.floor(add[add.length - 1].tUs / 1000))
+    const fromUs = day * 1000
+    const toUs = to * 1000
+    const before = this.prints.filter((pp) => pp.tUs < fromUs)
+    const after = this.prints.filter((pp) => pp.tUs > toUs)
+    this.prints = [...before, ...add, ...after]
+    this.recordedSpans = mergeSpans([...this.recordedSpans, ...chunk.sessions.map((ss) => [ss[0], ss[1]] as [number, number])])
+  }
+
+  /** Keep at most `maxTapeDays` loaded days: drop the ones farthest from the screen (never today, which carries the live tape). */
+  private evictDays(): void {
+    const today = Math.floor(Date.now() / DAY_MS) * DAY_MS
+    const done = [...this.tapeDays.entries()].filter(([d, st]) => st === 'done' && d !== today).map(([d]) => d)
+    const keep = Math.max(1, this.opts.maxTapeDays) - (this.tapeDays.has(today) ? 1 : 0)
+    if (done.length <= keep) return
+    const focus = this.focusTime
+    done.sort((a, b) => Math.abs(b + DAY_MS / 2 - focus) - Math.abs(a + DAY_MS / 2 - focus))
+    for (const d of done.slice(0, done.length - keep)) {
+      this.tapeDays.delete(d)
+      const a = d * 1000
+      const b = (d + DAY_MS) * 1000
+      this.prints = this.prints.filter((pp) => pp.tUs < a || pp.tUs >= b)
+      // the day is no longer recorded here: its candles go back to estimates until it loads again
+      const cut: [number, number][] = []
+      for (const [x, y] of this.recordedSpans) {
+        if (y <= d || x >= d + DAY_MS) cut.push([x, y])
+        else {
+          if (x < d) cut.push([x, d])
+          if (y > d + DAY_MS) cut.push([d + DAY_MS, y])
+        }
+      }
+      this.recordedSpans = cut
+    }
+  }
+
+  /** Ask for the tape behind the sessions on screen (and the one before them, for zones), newest first. */
+  private ensureVisibleTape(conv: Converters, rect: Rect): void {
+    if (!this.opts.loadVisible || !this.enabled) return
+    const now = performance.now()
+    if (now - this.lastEnsure < 400) return
+    this.lastEnsure = now
+    const candles = this.getCandles()
+    if (!candles.length) return
+    const first = candles[0].time
+    const nowMs = Date.now()
+    let t0 = Math.max(first, conv.xToTime(rect.x))
+    const t1 = Math.min(nowMs, conv.xToTime(rect.x + rect.width))
+    if (!(t1 > t0)) return
+    this.focusTime = (t0 + t1) / 2
+    // whole sessions: from the start of the first visible one (and one more for previous-session zones)
+    t0 = this.clock().periodStart(t0) - (this.opts.zonesEnable ? DAY_MS : 0)
+    t0 = Math.max(first, t0)
+    const key = `${Math.floor(t0 / DAY_MS)}|${Math.floor(t1 / DAY_MS)}`
+    if (key === this.ensureKey) return
+    this.ensureKey = key
+    const days: number[] = []
+    for (let d = Math.floor(t1 / DAY_MS) * DAY_MS; d >= Math.floor(t0 / DAY_MS) * DAY_MS; d -= DAY_MS) days.push(d)
+    this.requestDays(days.slice(0, Math.max(1, this.opts.maxTapeDays)))
   }
 
   private spans(): [number, number][] {
@@ -728,6 +834,7 @@ export default class DeepProfileOverlay {
     const conv = this.engine.getMainConverters()
     const rect = this.engine.getMainPaneRect()
     if (!conv || !rect) return
+    this.ensureVisibleTape(conv, rect)
     const now = performance.now()
     if (now - this.lastRecompute >= RECOMPUTE_MS || this.profilesKey === '') {
       this.lastRecompute = now

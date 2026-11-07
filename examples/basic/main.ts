@@ -1309,7 +1309,9 @@ function openDeepProfileSettings(p: ChartPane): void {
           modalCheckField(body, 'Number of trades (count instead of volume)', o.countTrades, (v) => set({ countTrades: v }))
           modalNumField(body, 'Min filter (size, 0 = off)', o.minFilter, 0, 1_000_000, 0.01, (v) => set({ minFilter: Math.max(0, v) }))
           modalNumField(body, 'Max filter (size, 0 = off)', o.maxFilter, 0, 1_000_000, 0.01, (v) => set({ maxFilter: Math.max(0, v) }))
-          modalNumField(body, 'Days of recorded tape', o.daysToLoad, 1, 14, 1, (v) => set({ daysToLoad: Math.round(v) }))
+          modalNumField(body, 'Days of recorded tape preloaded', o.daysToLoad, 1, 14, 1, (v) => set({ daysToLoad: Math.round(v) }))
+          modalCheckField(body, 'Load the recorded tape for sessions on screen (as you scroll)', o.loadVisible, (v) => set({ loadVisible: v }))
+          modalNumField(body, 'Most days of tape held at once', o.maxTapeDays, 2, 20, 1, (v) => set({ maxTapeDays: Math.round(v) }))
           head(body, 'Tick grouping')
           let autoPx: HTMLInputElement | null = null
           let manual: HTMLInputElement | null = null
