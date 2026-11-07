@@ -22,12 +22,12 @@ trap 'rm -rf "$dl"' EXIT
 if command -v gh > /dev/null && gh auth status > /dev/null 2>&1; then
   if [[ -z "$tag" ]]; then tag="$(gh release list -R "$REPO" --limit 1 --json tagName -q '.[0].tagName')"; fi
   [[ -n "$tag" ]] || { echo "No exports in $REPO yet." >&2; exit 1; }
-  echo "Downloading $tag from $REPO…"
+  echo "Downloading $tag from ${REPO}…"
   gh release download "$tag" -R "$REPO" -D "$dl"
 else
-  [[ -n "${GITHUB_EXPORT_TOKEN:-}" ]] || { echo "Run 'gh auth login' or set GITHUB_EXPORT_TOKEN." >&2; exit 1; }
+  # No token: fine for a public repo (a private one needs GITHUB_EXPORT_TOKEN or gh).
   umask 077
-  printf 'Authorization: Bearer %s\n' "$GITHUB_EXPORT_TOKEN" > "$dl/.auth"
+  if [[ -n "${GITHUB_EXPORT_TOKEN:-}" ]]; then printf 'Authorization: Bearer %s\n' "$GITHUB_EXPORT_TOKEN" > "$dl/.auth"; else printf 'X-Candl: fetch\n' > "$dl/.auth"; fi
   umask 022
   api() { curl -fsSL -H @"$dl/.auth" -H 'X-GitHub-Api-Version: 2022-11-28' "$@"; }
   # releases/latest skips pre-releases, so list the newest one instead when no tag is given
@@ -35,7 +35,7 @@ else
   rel="$(api -H 'Accept: application/vnd.github+json' "$url")"
   tag="$(node -e 'let r = JSON.parse(require("fs").readFileSync(0, "utf8")); if (Array.isArray(r)) r = r[0]; if (!r) process.exit(1); console.log(r.tag_name)' <<< "$rel")" \
     || { echo "No exports in $REPO yet." >&2; exit 1; }
-  echo "Downloading $tag from $REPO…"
+  echo "Downloading $tag from ${REPO}…"
   while IFS=$'\t' read -r id name; do
     [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "Skipping odd asset name: $name" >&2; continue; }
     api -H 'Accept: application/octet-stream' -o "$dl/$name" "https://api.github.com/repos/$REPO/releases/assets/$id"
