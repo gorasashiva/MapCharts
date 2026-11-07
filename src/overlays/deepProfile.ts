@@ -149,6 +149,12 @@ export interface DeepProfileOptions {
   placement: DpPlacement
   /** Latest / Multiple / Custom: bars grow from the session's start (left) or end (right). */
   periodAlign: DpPlacement
+  /**
+   * Delta + Volume: where the axis sits. 'sessionStart' = on the session's open line, delta
+   * outward (before the open), volume into the session, so each level is marked at the open;
+   * 'inside' = a delta strip inside the session, the axis just after it.
+   */
+  dvAxis: 'sessionStart' | 'inside'
   showValues: boolean
   showTotals: boolean
   // ---- persisted edits ----
@@ -211,6 +217,7 @@ export const DEEP_PROFILE_DEFAULTS: DeepProfileOptions = {
   sideWidthPct: 0.2,
   placement: 'right',
   periodAlign: 'left',
+  dvAxis: 'sessionStart',
   showValues: false,
   showTotals: true,
   joined: [],
@@ -625,7 +632,8 @@ export default class DeepProfileOverlay {
       lengthValue: o.lengthValue,
       anchorMinute: (ny ?? this.anchorUtcHour) * 60,
       anchorOffset: zoneOffset(ny !== null ? 'NY' : 'UTC'),
-      splitMode: o.splitMode,
+      // ETH / RTH splits are a gold (New York session) idea: crypto keeps one profile a day
+      splitMode: ny !== null ? o.splitMode : 'none',
       splitMinutes: splits,
       splitOffset: zoneOffset(o.splitZone),
     })
@@ -736,7 +744,7 @@ export default class DeepProfileOverlay {
     const slot = this.slotWidth(conv)
     if (this.opts.zonesEnable) this.drawZones(conv, rect, slot)
     for (const p of this.profiles) {
-      let box: { x0: number; x1: number; dir: 1 | -1 }
+      let box: { x0: number; x1: number; dir: 1 | -1; edge?: number }
       if (side) {
         const w = rect.width * this.opts.sideWidthPct
         box = this.opts.placement === 'right' ? { x0: rect.x + rect.width - w, x1: rect.x + rect.width, dir: -1 } : { x0: rect.x, x1: rect.x + w, dir: 1 }
@@ -746,7 +754,8 @@ export default class DeepProfileOverlay {
         if (x1 < rect.x || x0 > rect.x + rect.width) continue
         // Sticky: a period that began off-screen draws from the pane's left
         // edge, so a long profile (a day on a 1m chart) stays readable.
-        box = { x0: Math.max(x0, rect.x), x1: Math.min(x1, rect.x + rect.width), dir: this.opts.periodAlign === 'right' ? -1 : 1 }
+        const dir = this.opts.periodAlign === 'right' ? -1 : 1
+        box = { x0: Math.max(x0, rect.x), x1: Math.min(x1, rect.x + rect.width), dir, edge: dir === 1 ? x0 : x1 }
       }
       this.drawProfile(conv, rect, p, box, slot)
     }
@@ -832,7 +841,7 @@ export default class DeepProfileOverlay {
     return Math.abs(conv.timeToX(last.end) - conv.timeToX(last.time))
   }
 
-  private drawProfile(conv: Converters, rect: Rect, p: DpProfile, box: { x0: number; x1: number; dir: 1 | -1 }, slot: number): void {
+  private drawProfile(conv: Converters, rect: Rect, p: DpProfile, box: { x0: number; x1: number; dir: 1 | -1; edge?: number }, slot: number): void {
     const ctx = this.ctx
     const o = this.opts
     const n = p.buy.length
@@ -859,11 +868,14 @@ export default class DeepProfileOverlay {
     if (maxTot <= 0) return
 
     const deltaVolume = o.vbpType === 'deltaVolume'
-    // Delta + Volume hugs the session edge too: a delta strip at the edge, the
-    // axis just inside it, volume growing on into the session.
+    // Delta + Volume: by default the axis is the session's open line (end line when
+    // aligned right): delta grows outward, before the open, and volume on into the
+    // session, so every level is marked at the open. A session that began off-screen
+    // (sticky box) and the 'inside' option keep the delta strip inside the session.
     const deltaLen = L * DV_DELTA_SHARE
     const volLen = L - deltaLen
-    const axis = box.dir === 1 ? box.x0 + deltaLen : box.x1 - deltaLen
+    const edgeOnScreen = box.edge !== undefined && box.edge >= rect.x && box.edge <= rect.x + rect.width
+    const axis = o.dvAxis === 'sessionStart' && edgeOnScreen ? (box.edge as number) : box.dir === 1 ? box.x0 + deltaLen : box.x1 - deltaLen
     const anchor = box.dir === 1 ? box.x0 : box.x1
     const rowPx = Math.abs(yOf(p.rowLo + p.rowSize) - yOf(p.rowLo))
     const labelRows = o.showValues && rowPx >= 9

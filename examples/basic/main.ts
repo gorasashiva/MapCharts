@@ -1267,7 +1267,7 @@ function openDeepProfileSettings(p: ChartPane): void {
             ['months', 'Months'],
           ], (v) => set({ lengthType: v as DeepProfileOptions['lengthType'] }))
           modalNumField(body, 'Length value', o.lengthValue, 1, 500, 1, (v) => set({ lengthValue: Math.max(1, Math.round(v)) }))
-          head(body, 'Split time (1-day periods)')
+          head(body, 'Split time (1-day periods, gold only: crypto keeps one profile a day)')
           modalSelectField(body, 'Filter mode', o.splitMode, [
             ['none', 'None — one profile a day'],
             ['splitted', 'Splitted — 2 a day (at time 1)'],
@@ -1384,6 +1384,10 @@ function openDeepProfileSettings(p: ChartPane): void {
             ['left', 'Left — bars grow from the session start'],
             ['right', 'Right — bars grow back from the session end'],
           ], (v) => set({ periodAlign: v as DeepProfileOptions['periodAlign'] }))
+          modalSelectField(body, 'Delta + Volume axis', o.dvAxis, [
+            ['sessionStart', 'On the session open line (delta before it, volume after)'],
+            ['inside', 'Inside the session (delta strip, then volume)'],
+          ], (v) => set({ dvAxis: v as DeepProfileOptions['dvAxis'] }))
           modalNumField(body, 'Bar length (share of period)', o.fillPct, 0.2, 1, 0.05, (v) => set({ fillPct: v }))
           modalNumField(body, 'Composite / Visible width (share of pane)', o.sideWidthPct, 0.05, 0.6, 0.01, (v) => set({ sideWidthPct: v }))
           modalSelectField(body, 'Composite / Visible placement', o.placement, [
