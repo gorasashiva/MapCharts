@@ -38,6 +38,7 @@ import LiquidityLevelsOverlay from '../../src/overlays/liquidityLevels'
 import BigTradesOverlay, { type BigTradesOptions } from '../../src/overlays/bigTrades'
 import DeepTradesOverlay, { type DeepTradesOptions } from '../../src/overlays/deepTrades'
 import HeavyAbsorptionOverlay, { type HeavyAbsorptionOverlayOptions } from '../../src/overlays/heavyAbsorption'
+import BlockBreakOverlay, { type BlockBreakOverlayOptions } from '../../src/overlays/blockBreak'
 import DeepProfileOverlay, { type DeepProfileOptions, type DpHit, type DpProfileAction } from '../../src/overlays/deepProfile'
 import { askNotificationPermissionOnce, fireSignalAlert } from './signalAlert'
 import { computeGexSabersModel } from './gexSabers'
@@ -200,6 +201,8 @@ export interface PaneState {
   deepTradesOptions?: Partial<DeepTradesOptions>
   heavyAbsorption?: boolean
   heavyAbsorptionOptions?: Partial<HeavyAbsorptionOverlayOptions>
+  blockBreak?: boolean
+  blockBreakOptions?: Partial<BlockBreakOverlayOptions>
   deepProfile?: boolean
   deepProfileOptions?: Partial<DeepProfileOptions>
   footprintOptions?: Partial<FootprintOptions>
@@ -400,6 +403,7 @@ export class ChartPane {
   private readonly bigTrades: BigTradesOverlay
   private readonly deepTrades: DeepTradesOverlay
   private readonly heavyAbsorption: HeavyAbsorptionOverlay
+  private readonly blockBreak: BlockBreakOverlay
   private readonly deepProfile: DeepProfileOverlay
   private readonly volumeProfileTool: VolumeProfileOverlay
   private readonly footprint: FootprintOverlay
@@ -666,6 +670,13 @@ export class ChartPane {
     this.heavyAbsorption.onAlert = (text, sound) => fireSignalAlert(`Heavy Absorption · ${this.state.symbol}`, text, sound)
     this.heavyAbsorption.setSymbol(this.state.symbol)
     this.setHeavyAbsorptionEnabled(this.state.heavyAbsorption ?? false)
+
+    // Block Break: fresh 1H/4H block broken with a stacked footprint imbalance, from the
+    // recorded tape + live trades (1-minute footprint built in the overlay). See blockBreak.ts.
+    this.blockBreak = new BlockBreakOverlay(this.canvasHost, this.engine, () => this.candles, (from, to) => this.fetchRecordedTape(from, to), this.state.blockBreakOptions)
+    this.blockBreak.onAlert = (text, sound) => fireSignalAlert(`Block Break · ${this.state.symbol}`, text, sound)
+    this.blockBreak.setSymbol(this.state.symbol)
+    this.setBlockBreakEnabled(this.state.blockBreak ?? false)
 
     // Deep Profile: DeepCharts-style volume / delta profiles per period, from
     // the exact tape where recorded (live prints fed below), candle estimates
@@ -1335,6 +1346,21 @@ export class ChartPane {
     this.state.heavyAbsorptionOptions = { ...(this.state.heavyAbsorptionOptions ?? {}), ...patch }
   }
 
+  setBlockBreakEnabled(on: boolean): void {
+    this.state.blockBreak = on
+    if (on) askNotificationPermissionOnce()
+    this.blockBreak.setEnabled(on)
+  }
+
+  getBlockBreakOptions(): BlockBreakOverlayOptions {
+    return this.blockBreak.getOptions()
+  }
+
+  applyBlockBreakOption(patch: Partial<BlockBreakOverlayOptions>): void {
+    this.blockBreak.setOptions(patch)
+    this.state.blockBreakOptions = { ...(this.state.blockBreakOptions ?? {}), ...patch }
+  }
+
   setDeepProfileEnabled(on: boolean): void {
     this.state.deepProfile = on
     this.deepProfile.setEnabled(on)
@@ -1526,6 +1552,20 @@ export class ChartPane {
   getToolValues(id: string): ToolLegendValue[] {
     const fmt = (v: number): string => v.toLocaleString('en-US', { maximumFractionDigits: v >= 1000 ? 0 : v >= 1 ? 2 : 4 })
     if (this.replayFull && LIVE_ONLY_TOOLS.has(id)) return [{ text: '⏸ live only — paused in replay', color: '#8b8f9a' }]
+    if (id === 'blockBreak') {
+      const r = this.blockBreak.getResult()
+      if (!r) return [{ text: 'loading…', color: '#8b8f9a' }]
+      const o = this.blockBreak.getOptions()
+      const out: ToolLegendValue[] = r.signals
+        .filter((s) => s.outcome === 'open')
+        .map((s) => ({
+          text: `${s.dir > 0 ? 'BUY' : 'SELL'} ${fmt(s.entry)} · SL ${fmt(s.stop)} · T2 ${fmt(s.t2)} · ${s.r >= 0 ? '+' : ''}${s.r.toFixed(2)}R`,
+          color: s.dir > 0 ? o.buyColor : o.sellColor,
+        }))
+      if (r.watching.length) out.push({ text: `watching ${r.watching.length} touched block${r.watching.length > 1 ? 's' : ''}`, color: '#ffd54f' })
+      if (!out.length) out.push({ text: `${r.fresh.length} fresh blocks · ${r.signals.length} signals`, color: '#8b8f9a' })
+      return out
+    }
     if (id === 'ivWalls') {
       const s = this.ivWalls.getSummary()
       if (!s) return []
@@ -1858,6 +1898,7 @@ export class ChartPane {
         this.footprint.addTrade(trade)
         if (this.state.deepTrades) this.deepTrades.addTrade({ time: trade.time, timeUs: trade.timeUs, price: trade.price, volume: trade.qty, side: trade.side })
         if (this.state.heavyAbsorption) this.heavyAbsorption.addTrade({ time: trade.time, timeUs: trade.timeUs, price: trade.price, volume: trade.qty, side: trade.side })
+        if (this.state.blockBreak) this.blockBreak.addTrade(trade)
         if (this.state.deepProfile) this.deepProfile.addTrade(trade)
         if (this.state.orderFlow) {
           this.orderflow.onTrade({
@@ -2078,6 +2119,7 @@ export class ChartPane {
     this.deepTrades.setSymbol(this.state.symbol)
     this.deepTrades.reset()
     this.heavyAbsorption.setSymbol(this.state.symbol)
+    this.blockBreak.setSymbol(this.state.symbol)
     this.deepProfile.setSymbol(this.state.symbol, sessionOpenNyHour(this.state.symbol), sessionOpenHourUTC(this.state.symbol))
     this.volumeProfileTool.reset() // session/bars period must not mix candles from the old symbol
     // Session-anchored tools follow the new symbol's trading-day open (gold 03:30 IST) — see core/session.ts.
@@ -2313,6 +2355,7 @@ export class ChartPane {
       this.bigTrades.setCutoff(replayAt)
       this.deepTrades.setCutoff(replayAt)
       this.heavyAbsorption.setCutoff(replayAt)
+      this.blockBreak.setCutoff(replayAt)
       this.deepProfile.setCutoff(replayAt)
     }
   }
@@ -2556,6 +2599,7 @@ export class ChartPane {
     this.bigTrades.setCutoff(null)
     this.deepTrades.setCutoff(null)
     this.heavyAbsorption.setCutoff(null)
+    this.blockBreak.setCutoff(null)
     this.deepProfile.setCutoff(null)
     this.ivWalls.setReplay(null)
     this.cancelBarPick()
@@ -2759,6 +2803,7 @@ export class ChartPane {
     this.bigTrades.destroy()
     this.deepTrades.destroy()
     this.heavyAbsorption.destroy()
+    this.blockBreak.destroy()
     this.deepProfile.destroy()
     this.volumeProfileTool.destroy()
     this.footprint.destroy()

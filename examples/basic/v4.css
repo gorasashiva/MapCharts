@@ -1458,3 +1458,12 @@ body {
   white-space: nowrap;
   flex: 0 0 auto;
 }
+
+/* Settings modal: a short explanation under the title (Block Break) */
+.modal .modal-note, .modal-note {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted);
+  margin: 2px 0 10px;
+  max-width: 420px;
+}

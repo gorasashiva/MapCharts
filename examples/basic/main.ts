@@ -30,6 +30,7 @@ import { el, ICONS, registerPopover, closeAllPopovers, layoutPreview, toHex } fr
 import { ChartPane, defaultIndicatorInstance, type PaneState, type IndicatorInstance } from './pane'
 import type { BigTradesOptions } from '../../src/overlays/bigTrades'
 import type { HeavyAbsorptionOverlayOptions } from '../../src/overlays/heavyAbsorption'
+import type { BlockBreakOverlayOptions } from '../../src/overlays/blockBreak'
 import type { DeepProfileOptions } from '../../src/overlays/deepProfile'
 import type { FvgStrategyOptions } from '../../src/overlays/fvgStrategy'
 import type { IvFadeOptions } from '../../src/overlays/ivFade'
@@ -1456,6 +1457,50 @@ function openHeavyAbsorptionSettings(p: ChartPane): void {
   document.body.appendChild(backdrop)
 }
 
+function openBlockBreakSettings(p: ChartPane): void {
+  const opts = p.getBlockBreakOptions()
+  const set = (patch: Partial<BlockBreakOverlayOptions>): void => p.applyBlockBreakOption(patch)
+  const { backdrop, modal, close } = openModal('Block Break (1H/4H block + footprint)')
+  modal.appendChild(el('div', { class: 'modal-note' }, 'A fresh 1H/4H block broken: the 5 minutes after the first touch close beyond its far edge with a stacked imbalance in the break direction. Entry at that close, stop beyond the near edge. Researched on recorded XAUT / BTC / ETH tape: a small sample, so paper-trade it.'))
+
+  modal.appendChild(el('div', { class: 'modal-head' }, 'Blocks'))
+  modalNumField(modal, 'Block tolerance (% of price)', opts.blocks.tolPct, 0.01, 1, 0.01, (v) => set({ blocks: { ...p.getBlockBreakOptions().blocks, tolPct: v } }))
+  modalNumField(modal, 'Days of recorded tape', opts.daysToLoad, 1, 14, 1, (v) => set({ daysToLoad: v }))
+  modalSelectField(modal, 'Show blocks', opts.showBlocks, [
+    ['fresh', 'Fresh (untouched) blocks'],
+    ['none', 'Signals only'],
+  ], (v) => set({ showBlocks: v as BlockBreakOverlayOptions['showBlocks'] }))
+  modalCheckField(modal, 'Mark touched blocks without a signal', opts.showPassed, (v) => set({ showPassed: v }))
+
+  modal.appendChild(el('div', { class: 'modal-head' }, 'Footprint confirmation'))
+  modalNumField(modal, 'Window after the touch (minutes)', opts.windowMin, 1, 30, 1, (v) => set({ windowMin: v }))
+  modalNumField(modal, 'Stacked imbalance rows', opts.stackRows, 2, 10, 1, (v) => set({ stackRows: v }))
+  modalNumField(modal, 'Imbalance ratio', opts.imbalance, 1.5, 10, 0.5, (v) => set({ imbalance: v }))
+  modalNumField(modal, 'Footprint row size (0 = auto)', opts.rowSize, 0, 1000, 0.1, (v) => set({ rowSize: v }))
+
+  modal.appendChild(el('div', { class: 'modal-head' }, 'Trade'))
+  modalNumField(modal, 'Stop beyond the near edge (%)', opts.stopBufPct, 0, 2, 0.01, (v) => set({ stopBufPct: v }))
+  modalNumField(modal, 'Minimum stop (%)', opts.minStopPct, 0, 2, 0.01, (v) => set({ minStopPct: v }))
+  modalNumField(modal, 'T1 (R)', opts.t1R, 0.5, 10, 0.5, (v) => set({ t1R: v }))
+  modalNumField(modal, 'T2 = exit (R)', opts.t2R, 0.5, 20, 0.5, (v) => set({ t2R: v }))
+  modalNumField(modal, 'Close after (hours)', opts.holdHours, 0.5, 48, 0.5, (v) => set({ holdHours: v }))
+  modalNumField(modal, 'Round-trip cost for the tally (%)', opts.costPct, 0, 1, 0.01, (v) => set({ costPct: v }))
+
+  modal.appendChild(el('div', { class: 'modal-head' }, 'Appearance'))
+  modalColorField(modal, 'Buy', opts.buyColor, (v) => set({ buyColor: v }))
+  modalColorField(modal, 'Sell', opts.sellColor, (v) => set({ sellColor: v }))
+  modalColorField(modal, 'Stop line', opts.stopColor, (v) => set({ stopColor: v }))
+  modalColorField(modal, 'Target lines', opts.targetColor, (v) => set({ targetColor: v }))
+
+  modal.appendChild(el('div', { class: 'modal-head' }, 'Alerts'))
+  modalCheckField(modal, 'New signal', opts.alertOnSignal, (v) => set({ alertOnSignal: v }))
+  modalCheckField(modal, 'T1 reached / trade closed', opts.alertOnExit, (v) => set({ alertOnExit: v }))
+  modalCheckField(modal, 'Sound', opts.alertSound, (v) => set({ alertSound: v }))
+
+  modalDoneFoot(modal, close)
+  document.body.appendChild(backdrop)
+}
+
 function openDeepTradesSettings(p: ChartPane): void {
   const opts = p.getDeepTradesOptions()
   const { backdrop, modal, close } = openModal('Deep Trades')
@@ -2471,6 +2516,7 @@ const POWER_TOOLS: PowerTool[] = [
   { id: 'bigTrades', label: 'Big Trades', icon: '🐋', isOn: (p) => !!p.state.bigTrades, setOn: (p, on) => p.setBigTradesEnabled(on), openSettings: openBigTradesSettings },
   { id: 'deepTrades', label: 'Deep Trades', icon: '💎', isOn: (p) => !!p.state.deepTrades, setOn: (p, on) => p.setDeepTradesEnabled(on), openSettings: openDeepTradesSettings },
   { id: 'heavyAbsorption', label: 'Heavy Absorption', icon: '🧲', isOn: (p) => !!p.state.heavyAbsorption, setOn: (p, on) => p.setHeavyAbsorptionEnabled(on), openSettings: openHeavyAbsorptionSettings },
+  { id: 'blockBreak', label: 'Block Break (1H/4H + footprint)', icon: '🧱', isOn: (p) => !!p.state.blockBreak, setOn: (p, on) => p.setBlockBreakEnabled(on), openSettings: openBlockBreakSettings },
   { id: 'deepProfile', label: 'Deep Profile', icon: '📊', isOn: (p) => !!p.state.deepProfile, setOn: (p, on) => p.setDeepProfileEnabled(on), openSettings: openDeepProfileSettings },
   {
     id: 'footprint',
@@ -3174,7 +3220,7 @@ function buildBuddyToggle(): HTMLElement {
  *  chart real estate on a large application header. */
 function buildBrand(): HTMLElement {
   // the ⚡ mark leads back to the site's home page
-  const brand = el('div', { class: 'brand', title: '⚡Charts' })
+  const brand = el('a', { class: 'brand', href: '/site/', title: 'Power Charts — home', 'aria-label': 'Power Charts home' })
   brand.append(el('span', { class: 'brand-mark' }, '⚡'))
   return brand
 }
