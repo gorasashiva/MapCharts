@@ -65,6 +65,11 @@ const PRICE_AXIS_W = 64
 const TIME_AXIS_H = 26
 const SUB_PANE_H = 110
 const SEPARATOR_H = 1
+/** A separate pane is never shorter than this, and leaves the main pane at least MAIN_MIN_H. */
+const SUB_PANE_MIN_H = 40
+const MAIN_MIN_H = 120
+/** How close (px) to a pane's top line a press grabs it for resizing. */
+const SEPARATOR_GRAB = 4
 const MIN_VISIBLE_BARS = 3
 const DEFAULT_VISIBLE_BARS = 160
 const RIGHT_OFFSET_BARS = 5
@@ -120,6 +125,8 @@ type DragState =
   | { mode: 'scale-axis'; startMin: number; startMax: number; anchorPrice: number; startY: number }
   /** Eraser armed: every drawing the pointer crosses while pressed is deleted. */
   | { mode: 'erase' }
+  /** Dragging the line above a separate pane: that pane grows / shrinks, the main pane takes the rest. */
+  | { mode: 'resize-pane'; id: string; startY: number; startH: number }
 
 /** Undo history depth for drawing edits. */
 const MAX_UNDO = 100
@@ -218,6 +225,8 @@ export function createChartEngine(container: HTMLElement, options: ChartEngineOp
   // type-specific branch in extendSeries() that created this session.
   let rebinSession: RebinSession<any> | null = null
   let indicators: IndicatorRenderData[] = []
+  /** User-set separate-pane heights (CSS px) by indicator id. */
+  let paneHeights: Record<string, number> = {}
   /**
    * Replay cursor in render-series index space, or null when replay is OFF.
    * When set, the engine clips every series-derived layer to bars [0..cursor]
@@ -395,20 +404,22 @@ export function createChartEngine(container: HTMLElement, options: ChartEngineOp
     const np = paneInds.length
     const timeAxisTop = Math.max(0, height - TIME_AXIS_H)
     const available = Math.max(0, timeAxisTop - np * SEPARATOR_H)
-    let subH = np > 0 ? SUB_PANE_H : 0
-    let mainH = available - np * subH
-    if (np > 0 && mainH < 120) {
-      // Not enough room for full-size sub-panes: shrink them, keep main usable.
-      subH = Math.max(40, Math.floor((available - 120) / np))
-      mainH = Math.max(0, available - np * subH)
+    // each separate pane: its user-set height (dragged), else the default
+    let subs = paneInds.map((ind) => Math.max(SUB_PANE_MIN_H, Math.round(paneHeights[ind.instanceId] ?? SUB_PANE_H)))
+    const want = subs.reduce((a, b) => a + b, 0)
+    if (np > 0 && available - want < MAIN_MIN_H) {
+      // Not enough room: shrink the separate panes in proportion, keep the main pane usable.
+      const room = Math.max(np * SUB_PANE_MIN_H, available - MAIN_MIN_H)
+      subs = subs.map((h) => Math.max(SUB_PANE_MIN_H, Math.floor((h / want) * room)))
     }
+    const mainH = Math.max(0, available - subs.reduce((a, b) => a + b, 0))
     const panes: PaneLayout[] = [{ kind: 'main', top: 0, height: mainH }]
     let top = mainH
-    for (const ind of paneInds) {
+    paneInds.forEach((ind, k) => {
       top += SEPARATOR_H
-      panes.push({ kind: 'indicator', top, height: subH, indicator: ind })
-      top += subH
-    }
+      panes.push({ kind: 'indicator', top, height: subs[k], indicator: ind })
+      top += subs[k]
+    })
     ts.plotWidth = plotWidth
     return { width, height, plotWidth, timeAxisTop, panes }
   }
@@ -1539,9 +1550,23 @@ export function createChartEngine(container: HTMLElement, options: ChartEngineOp
   }
 
   // ----- interactions ----------------------------------------------------------
+  /** The separate pane whose top line is under (x, y), for resizing. */
+  function separatorAt(x: number, y: number, layout: Layout): PaneLayout | null {
+    if (x < 0 || x > layout.plotWidth) return null
+    for (let i = 1; i < layout.panes.length; i++) {
+      const p = layout.panes[i]
+      if (p.kind === 'indicator' && Math.abs(y - (p.top - SEPARATOR_H / 2)) <= SEPARATOR_GRAB) return p
+    }
+    return null
+  }
+
   function updateCursor(x: number, y: number): void {
     if (drag) return
     const layout = computeLayout()
+    if (!activeTool && !eraser && separatorAt(x, y, layout)) {
+      canvas.style.cursor = 'row-resize'
+      return
+    }
     // Right price-axis affordances (no tool armed): the "A" toggle button and
     // the draggable scale strip. Checked before the plot test since both live
     // at x > plotWidth. Alert tags (also in this column) win via their own
@@ -1611,6 +1636,14 @@ export function createChartEngine(container: HTMLElement, options: ChartEngineOp
         if (pointsNeeded(activeTool) === -1) startFreehand(x, y, layout)
         else placeToolPoint(x, y, layout)
       }
+      return
+    }
+
+    // The line above a separate pane: drag to resize that pane.
+    const sep = separatorAt(x, y, layout)
+    if (sep && sep.indicator) {
+      drag = { mode: 'resize-pane', id: sep.indicator.instanceId, startY: y, startH: sep.height }
+      canvas.style.cursor = 'row-resize'
       return
     }
 
@@ -1780,6 +1813,14 @@ export function createChartEngine(container: HTMLElement, options: ChartEngineOp
           }
         }
         drag.lastY = y
+      } else if (drag.mode === 'resize-pane') {
+        // dragging the line up makes the pane below it taller; the main pane gives / takes the room
+        const layout = computeLayout()
+        const id = drag.id
+        const others = layout.panes.slice(1).filter((p) => p.indicator && p.indicator.instanceId !== id).reduce((a, p) => a + p.height + SEPARATOR_H, 0)
+        const maxH = Math.max(SUB_PANE_MIN_H, layout.timeAxisTop - MAIN_MIN_H - others - SEPARATOR_H)
+        paneHeights = { ...paneHeights, [id]: clamp(drag.startH - (y - drag.startY), SUB_PANE_MIN_H, maxH) }
+        invalidate()
       } else if (drag.mode === 'scale-axis') {
         // Dragging the price axis scales the range about the anchor price. Up =
         // smaller range (zoom in), down = larger range (zoom out), exponential
@@ -1848,6 +1889,8 @@ export function createChartEngine(container: HTMLElement, options: ChartEngineOp
         // Hand the new price to the host (which re-runs setAlerts). The local
         // preview already moved the line; a no-travel click is a no-op.
         if (drag.moved) options.onAlertMove?.(drag.id, drag.price)
+      } else if (drag.mode === 'resize-pane') {
+        options.onPaneHeightsChange?.({ ...paneHeights })
       } else if ((drag.mode === 'move-drawing' || drag.mode === 'move-handle') && drag.moved) {
         emitDrawings()
         emitSelectionCurrent() // same object reference that onDrawingsChange just saw
@@ -2521,8 +2564,9 @@ export function createChartEngine(container: HTMLElement, options: ChartEngineOp
       const scale = computePaneScale(pane)
       scales.push(scale)
       const ticks = scale.ticks()
-      if (showHGrid) R.drawHorizontalGrid(ctx, colors, layout.plotWidth, scale, ticks)
       const ind = pane.indicator as IndicatorRenderData
+      // a pane with nothing plotted (a hidden indicator, or a tool that paints the pane itself) gets no grid / scale
+      if (showHGrid && ind.outputs.length) R.drawHorizontalGrid(ctx, colors, layout.plotWidth, scale, ticks)
       if (ind.range && ind.range[0] === 0 && ind.range[1] === 100) {
         R.drawGuideLines(ctx, colors, layout.plotWidth, scale, [30, 70])
       }
@@ -2554,6 +2598,7 @@ export function createChartEngine(container: HTMLElement, options: ChartEngineOp
         .filter((t) => t.y > togglesBottom),
     )
     for (let pi = 1; pi < layout.panes.length; pi++) {
+      if (!layout.panes[pi].indicator?.outputs.length) continue
       R.drawPriceAxisLabels(ctx, colors, layout.plotWidth, paneTickLabels(scales[pi], scales[pi].ticks()))
     }
 
@@ -3278,6 +3323,13 @@ export function createChartEngine(container: HTMLElement, options: ChartEngineOp
       invalidate()
     },
 
+    setPaneHeights(h: Record<string, number>): void {
+      paneHeights = { ...h }
+      invalidate()
+    },
+    getPaneHeights(): Record<string, number> {
+      return { ...paneHeights }
+    },
     getPaneRects(): { top: number; height: number }[] {
       if (size.width <= 0 || size.height <= 0) return []
       return computeLayout().panes.map((p) => ({ top: p.top, height: p.height }))

@@ -31,6 +31,8 @@ import { ChartPane, defaultIndicatorInstance, type PaneState, type IndicatorInst
 import type { BigTradesOptions } from '../../src/overlays/bigTrades'
 import type { HeavyAbsorptionOverlayOptions } from '../../src/overlays/heavyAbsorption'
 import type { BlockBreakOverlayOptions } from '../../src/overlays/blockBreak'
+import type { DeepStatsOptions } from '../../src/overlays/deepStats'
+import { DEEP_STATS_KEYS, DEEP_STAT_LABELS } from '../../src/overlays/deepStatsModel'
 import type { DeepProfileOptions } from '../../src/overlays/deepProfile'
 import type { FvgStrategyOptions } from '../../src/overlays/fvgStrategy'
 import type { IvFadeOptions } from '../../src/overlays/ivFade'
@@ -1507,6 +1509,63 @@ function openBlockBreakSettings(p: ChartPane): void {
   document.body.appendChild(backdrop)
 }
 
+function openDeepStatsSettings(p: ChartPane): void {
+  const opts = p.getDeepStatsOptions()
+  const set = (patch: Partial<DeepStatsOptions>): void => p.applyDeepStatsOption(patch)
+  const { backdrop, modal, close } = openModal('Deep Stats')
+  modal.appendChild(el('div', { class: 'modal-note' }, 'Order-flow values of each bar from the recorded tape (loaded for the bars on screen) and live trades. Bars the tape does not cover stay blank.'))
+
+  modal.appendChild(el('div', { class: 'modal-head' }, 'Input and filters'))
+  modalSelectField(modal, 'Input data', opts.input, [
+    ['volume', 'Volume (every trade)'],
+    ['order', 'Order (rebuilt taker orders)'],
+    ['aggregate', 'Aggregate Trades (orders merged)'],
+  ], (v) => set({ input: v as DeepStatsOptions['input'] }))
+  modalNumField(modal, 'Min filter (0 = off)', opts.minFilter, 0, 1_000_000, 0.001, (v) => set({ minFilter: v }))
+  modalNumField(modal, 'Max filter (0 = off)', opts.maxFilter, 0, 1_000_000, 0.001, (v) => set({ maxFilter: v }))
+
+  modal.appendChild(el('div', { class: 'modal-head' }, 'Plot'))
+  modalNumField(modal, 'Dev. std. for coloring', opts.devStd, 0.5, 6, 0.1, (v) => set({ devStd: v }))
+  modalSelectField(modal, 'Position', opts.position, [
+    ['pane', 'Separate pane below the chart (drag its top line to resize)'],
+    ['bottom', 'Over the price chart, bottom'],
+    ['top', 'Over the price chart, top'],
+  ], (v) => set({ position: v as DeepStatsOptions['position'] }))
+  modalNumField(modal, 'Row height over the chart (px)', opts.rowHeight, 10, 40, 1, (v) => set({ rowHeight: v }))
+  modalNumField(modal, 'Text size', opts.textSize, 7, 18, 1, (v) => set({ textSize: v }))
+  modalColorField(modal, 'Text color', opts.textColor, (v) => set({ textColor: v }))
+  modalCheckField(modal, 'Auto text format (1.2K)', opts.autoFormat, (v) => set({ autoFormat: v }))
+  modalCheckField(modal, 'Invert order', opts.invertOrder, (v) => set({ invertOrder: v }))
+  modalNumField(modal, 'Cell outline', opts.outline, 0, 3, 1, (v) => set({ outline: v }))
+  modalNumField(modal, 'Ratio row size (0 = auto: BTC 10, gold / ETH 0.5)', opts.rowSize, 0, 10_000, 0.01, (v) => set({ rowSize: v }))
+
+  modal.appendChild(el('div', { class: 'modal-head' }, 'Header'))
+  modalCheckField(modal, 'Show header', opts.showHeader, (v) => set({ showHeader: v }))
+  modalColorField(modal, 'Header background', opts.headerBg, (v) => set({ headerBg: v }))
+  modalColorField(modal, 'Header text', opts.headerText, (v) => set({ headerText: v }))
+  modalNumField(modal, 'Header text size', opts.headerSize, 7, 18, 1, (v) => set({ headerSize: v }))
+
+  modal.appendChild(el('div', { class: 'modal-head' }, 'Colors'))
+  modalColorField(modal, 'Positive (buyers)', opts.posColor, (v) => set({ posColor: v }))
+  modalColorField(modal, 'Negative (sellers)', opts.negColor, (v) => set({ negColor: v }))
+  modalColorField(modal, 'High value (unsigned)', opts.heatColor, (v) => set({ heatColor: v }))
+  modalColorField(modal, 'Cell background', opts.cellBg, (v) => set({ cellBg: v }))
+  modalColorField(modal, 'Threshold highlight', opts.thresholdColor, (v) => set({ thresholdColor: v }))
+
+  modal.appendChild(el('div', { class: 'modal-head' }, 'Values (show · threshold on |value|, 0 = off)'))
+  for (const k of DEEP_STATS_KEYS) {
+    modalCheckField(modal, `${DEEP_STAT_LABELS[k]}`, opts.show[k], (v) => set({ show: { ...p.getDeepStatsOptions().show, [k]: v } }))
+    modalNumField(modal, `${DEEP_STAT_LABELS[k]} threshold`, opts.thresholds[k] ?? 0, 0, 1e12, 0.01, (v) => set({ thresholds: { ...p.getDeepStatsOptions().thresholds, [k]: v } }))
+  }
+
+  modal.appendChild(el('div', { class: 'modal-head' }, 'Tape'))
+  modalNumField(modal, 'Days preloaded', opts.daysToLoad, 1, 7, 1, (v) => set({ daysToLoad: Math.round(v) }))
+  modalNumField(modal, 'Most days of tape held at once', opts.maxTapeDays, 2, 14, 1, (v) => set({ maxTapeDays: Math.round(v) }))
+
+  modalDoneFoot(modal, close)
+  document.body.appendChild(backdrop)
+}
+
 function openDeepTradesSettings(p: ChartPane): void {
   const opts = p.getDeepTradesOptions()
   const { backdrop, modal, close } = openModal('Deep Trades')
@@ -2524,6 +2583,7 @@ const POWER_TOOLS: PowerTool[] = [
   { id: 'heavyAbsorption', label: 'Heavy Absorption', icon: '🧲', isOn: (p) => !!p.state.heavyAbsorption, setOn: (p, on) => p.setHeavyAbsorptionEnabled(on), openSettings: openHeavyAbsorptionSettings },
   { id: 'blockBreak', label: 'Block Break (1H/4H + footprint)', icon: '🧱', isOn: (p) => !!p.state.blockBreak, setOn: (p, on) => p.setBlockBreakEnabled(on), openSettings: openBlockBreakSettings },
   { id: 'deepProfile', label: 'Deep Profile', icon: '📊', isOn: (p) => !!p.state.deepProfile, setOn: (p, on) => p.setDeepProfileEnabled(on), openSettings: openDeepProfileSettings },
+  { id: 'deepStats', label: 'Deep Stats', icon: '🔢', isOn: (p) => !!p.state.deepStats, setOn: (p, on) => p.setDeepStatsEnabled(on), openSettings: openDeepStatsSettings },
   {
     id: 'footprint',
     label: 'Volume Footprint',

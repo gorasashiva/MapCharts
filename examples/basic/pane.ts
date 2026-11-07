@@ -40,6 +40,7 @@ import DeepTradesOverlay, { type DeepTradesOptions } from '../../src/overlays/de
 import HeavyAbsorptionOverlay, { type HeavyAbsorptionOverlayOptions } from '../../src/overlays/heavyAbsorption'
 import BlockBreakOverlay, { type BlockBreakOverlayOptions } from '../../src/overlays/blockBreak'
 import DeepProfileOverlay, { type DeepProfileOptions, type DpHit, type DpProfileAction } from '../../src/overlays/deepProfile'
+import DeepStatsOverlay, { type DeepStatsOptions } from '../../src/overlays/deepStats'
 import { askNotificationPermissionOnce, fireSignalAlert } from './signalAlert'
 import { computeGexSabersModel } from './gexSabers'
 import VolumeProfileOverlay, { type VolumeProfileOptions } from '../../src/overlays/volumeProfile'
@@ -205,6 +206,10 @@ export interface PaneState {
   blockBreakOptions?: Partial<BlockBreakOverlayOptions>
   deepProfile?: boolean
   deepProfileOptions?: Partial<DeepProfileOptions>
+  deepStats?: boolean
+  /** Separate-pane heights (CSS px) by indicator id, set by dragging the line above a pane. */
+  paneHeights?: Record<string, number>
+  deepStatsOptions?: Partial<DeepStatsOptions>
   footprintOptions?: Partial<FootprintOptions>
   volumeProfileOptions?: Partial<VolumeProfileOptions>
   gexOptions?: Partial<GexOptions>
@@ -405,6 +410,9 @@ export class ChartPane {
   private readonly heavyAbsorption: HeavyAbsorptionOverlay
   private readonly blockBreak: BlockBreakOverlay
   private readonly deepProfile: DeepProfileOverlay
+  private readonly deepStats: DeepStatsOverlay
+  /** Separate panes in engine order (pane indicators + tools with their own pane). */
+  private separatePaneIds: string[] = []
   private readonly volumeProfileTool: VolumeProfileOverlay
   private readonly footprint: FootprintOverlay
   private readonly gex: GexOverlay
@@ -520,7 +528,11 @@ export class ChartPane {
       onAlertMove: (id, price) => this.onAlertMove?.(id, price),
       onContextMenu: (info) => this.onContextMenu?.(info),
       onRequestHistory: () => void this.loadMoreHistory(),
+      onPaneHeightsChange: (h) => {
+        this.state.paneHeights = h
+      },
     })
+    this.engine.setPaneHeights(this.state.paneHeights ?? {})
     this.engine.setSettings({ ...DEFAULT_SETTINGS, gridVisible: true })
     if (initial.drawings.length) this.engine.setDrawings(initial.drawings)
     this.styleBar = new DrawingStyleBar(this.canvasHost, {
@@ -684,6 +696,13 @@ export class ChartPane {
     this.deepProfile = new DeepProfileOverlay(this.canvasHost, this.engine, () => this.candles, (from, to) => this.fetchRecordedTape(from, to), this.state.deepProfileOptions)
     this.deepProfile.setSymbol(this.state.symbol, sessionOpenNyHour(this.state.symbol), sessionOpenHourUTC(this.state.symbol))
     this.deepProfile.setEnabled(this.state.deepProfile ?? false)
+
+    // Deep Stats: DeepCharts-style per-bar order-flow values table, from the recorded tape
+    // (loaded for the bars on screen) + live trades. See deepStats.ts.
+    this.deepStats = new DeepStatsOverlay(this.canvasHost, this.engine, () => this.candles, (from, to) => this.fetchRecordedTape(from, to), this.state.deepStatsOptions)
+    this.deepStats.paneRect = () => this.separatePaneRect('deepStats')
+    this.deepStats.setSymbol(this.state.symbol)
+    this.deepStats.setEnabled(this.state.deepStats ?? false)
 
     // Deep Trades: DeepCharts-style large-trade + resting-liquidity marker
     // approximation (no true MBO feed available) — see deepTrades.ts.
@@ -1361,6 +1380,31 @@ export class ChartPane {
     this.state.blockBreakOptions = { ...(this.state.blockBreakOptions ?? {}), ...patch }
   }
 
+  setDeepStatsEnabled(on: boolean): void {
+    this.state.deepStats = on
+    this.deepStats.setEnabled(on)
+    this.renderIndicators(false) // its separate pane comes and goes with it
+  }
+
+  /** Plot rectangle of a separate pane (by indicator id), or null when it has none. */
+  private separatePaneRect(id: string): { x: number; y: number; width: number; height: number } | null {
+    const k = this.separatePaneIds.indexOf(id)
+    const main = this.engine.getMainPaneRect()
+    const r = this.engine.getPaneRects()[k + 1]
+    return k < 0 || !main || !r ? null : { x: main.x, y: r.top, width: main.width, height: r.height }
+  }
+
+  getDeepStatsOptions(): DeepStatsOptions {
+    return this.deepStats.getOptions()
+  }
+
+  applyDeepStatsOption(patch: Partial<DeepStatsOptions>): void {
+    this.deepStats.setOptions(patch)
+    if (patch.position !== undefined) this.renderIndicators(false)
+    const cur = this.state.deepStatsOptions ?? {}
+    this.state.deepStatsOptions = { ...cur, ...patch, ...(patch.show ? { show: { ...(cur.show ?? {}), ...patch.show } } : {}), ...(patch.thresholds ? { thresholds: { ...(cur.thresholds ?? {}), ...patch.thresholds } } : {}) } as Partial<DeepStatsOptions>
+  }
+
   setDeepProfileEnabled(on: boolean): void {
     this.state.deepProfile = on
     this.deepProfile.setEnabled(on)
@@ -1900,6 +1944,7 @@ export class ChartPane {
         if (this.state.heavyAbsorption) this.heavyAbsorption.addTrade({ time: trade.time, timeUs: trade.timeUs, price: trade.price, volume: trade.qty, side: trade.side })
         if (this.state.blockBreak) this.blockBreak.addTrade(trade)
         if (this.state.deepProfile) this.deepProfile.addTrade(trade)
+        if (this.state.deepStats) this.deepStats.addTrade(trade)
         if (this.state.orderFlow) {
           this.orderflow.onTrade({
             time: trade.time,
@@ -2121,6 +2166,7 @@ export class ChartPane {
     this.heavyAbsorption.setSymbol(this.state.symbol)
     this.blockBreak.setSymbol(this.state.symbol)
     this.deepProfile.setSymbol(this.state.symbol, sessionOpenNyHour(this.state.symbol), sessionOpenHourUTC(this.state.symbol))
+    this.deepStats.setSymbol(this.state.symbol)
     this.volumeProfileTool.reset() // session/bars period must not mix candles from the old symbol
     // Session-anchored tools follow the new symbol's trading-day open (gold 03:30 IST) — see core/session.ts.
     this.volumeProfileTool.setSessionOpenHour(sessionOpenHourUTC(this.state.symbol))
@@ -2221,6 +2267,9 @@ export class ChartPane {
       data.push({ instanceId: inst.defId, label, placement: def.placement, outputs, range: def.range })
       legend.push({ inst, label, placement: def.placement, outputs })
     }
+    // tools drawn in their own pane below the chart (Deep Stats): an empty pane the tool paints
+    if (this.state.deepStats && this.deepStats?.getOptions().position === 'pane') data.push({ instanceId: 'deepStats', label: 'Deep Stats', placement: 'pane', outputs: [] })
+    this.separatePaneIds = data.filter((d) => d.placement === 'pane').map((d) => d.instanceId)
     this.engine.setIndicators(data)
     this.legendIndicators = legend
     this.renderLegend()
@@ -2357,6 +2406,7 @@ export class ChartPane {
       this.heavyAbsorption.setCutoff(replayAt)
       this.blockBreak.setCutoff(replayAt)
       this.deepProfile.setCutoff(replayAt)
+      this.deepStats.setCutoff(replayAt)
     }
   }
 
@@ -2601,6 +2651,7 @@ export class ChartPane {
     this.heavyAbsorption.setCutoff(null)
     this.blockBreak.setCutoff(null)
     this.deepProfile.setCutoff(null)
+    this.deepStats.setCutoff(null)
     this.ivWalls.setReplay(null)
     this.cancelBarPick()
     this.engine.setReplayCursor(null)
@@ -2619,6 +2670,7 @@ export class ChartPane {
       if (gen !== this.loadGen) return
       this.symbolPrecision = info.pricePrecision
       this.deepProfile.setSymbolTick(Math.pow(10, -info.pricePrecision))
+      this.deepStats.setSymbolTick(Math.pow(10, -info.pricePrecision))
       this.engine.setPricePrecision(this.precisionOverride ?? info.pricePrecision)
 
       const hist = await this.provider.fetchCandles(this.state.symbol, this.state.interval, 1000)
@@ -2805,6 +2857,7 @@ export class ChartPane {
     this.heavyAbsorption.destroy()
     this.blockBreak.destroy()
     this.deepProfile.destroy()
+    this.deepStats.destroy()
     this.volumeProfileTool.destroy()
     this.footprint.destroy()
     this.gex.destroy()

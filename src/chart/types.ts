@@ -145,6 +145,8 @@ export interface ChartEngineOptions {
   onPercentToggle?: (next: PriceDisplayMode) => void
   /** The bottom-right axis corner (time-zone label) was clicked; client px of the click. */
   onTimeZoneCornerClick?: (clientX: number, clientY: number) => void
+  /** A separate pane was resized by dragging the line above it: heights in CSS px by indicator id. */
+  onPaneHeightsChange?: (heights: Record<string, number>) => void
 }
 
 /** How the main price axis labels prices. 'percent' / 'indexed' are relative to the first visible bar's close. */
@@ -303,6 +305,9 @@ export interface IChartEngine {
   setIndicatorLegend(on: boolean): void
   /** Every price pane's vertical extent in CSS px: [0] is the main pane, then one per pane indicator in setIndicators order. */
   getPaneRects(): { top: number; height: number }[]
+  /** Heights (CSS px) of separate panes by indicator id; ids not listed use the default height. */
+  setPaneHeights(heights: Record<string, number>): void
+  getPaneHeights(): Record<string, number>
   /** Add one drawing and select it (fires onDrawingsChange; undoable). */
   addDrawing(d: Drawing): void
   /** Delete one drawing by id (fires onDrawingsChange; undoable). */
