@@ -361,20 +361,7 @@ export function drawDcCprBb(g: CanvasRenderingContext2D, conv: Converters, rect:
     if (s.dcFill > 0) fillBetween(g, conv, candles, r.dcUp, r.dcLo, from, to, rgba(s.dcColor, s.dcFill))
     strokeSeries(g, conv, candles, r.dcUp, from, to, s.dcColor, s.dcWidth, s.dcDash)
     strokeSeries(g, conv, candles, r.dcLo, from, to, s.dcColor, s.dcWidth, s.dcDash)
-    if (s.dcMid) {
-      // Pine draws the middle as circles
-      g.fillStyle = rgba(s.dcColor, 0.6)
-      g.beginPath()
-      for (let i = from; i <= to; i++) {
-        const v = r.dcMid[i]
-        if (!Number.isFinite(v)) continue
-        const x = X(i)
-        const y = conv.priceToY(v)
-        g.moveTo(x + 1.4, y)
-        g.arc(x, y, 1.4, 0, Math.PI * 2)
-      }
-      g.fill()
-    }
+    if (s.dcMid) strokeSeries(g, conv, candles, r.dcMid, from, to, s.dcColor, s.dcWidth, s.dcDash)
   }
 
   // ---- Bollinger (background can be hidden: "Show background") ----
