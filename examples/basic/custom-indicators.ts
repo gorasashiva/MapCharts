@@ -342,6 +342,109 @@ function hma31Signals(candles: Candle[], params: Record<string, number>): Signal
 }
 
 // ---------------------------------------------------------------------------
+// HMA 31 + Supertrend 2,2 + Coppock 9,13,17 (hma-coppock.pine, ported)
+// Two defs: the overlay carries HMA, Supertrend and the BUY/SELL signals;
+// the Coppock curve lives in its own pane (one IndicatorDef = one placement).
+// ---------------------------------------------------------------------------
+
+/** ta.roc(src, length): percent change versus `length` bars ago. */
+function roc(values: number[], length: number): (number | null)[] {
+  return values.map((v, i) => {
+    const p = i >= length ? values[i - length] : undefined
+    if (p === undefined || p === 0) return null
+    return (100 * (v - p)) / p
+  })
+}
+
+/** Coppock: WMA( ROC(close, longRoc) + ROC(close, shortRoc), wmaLen ). */
+function coppockCurve(close: number[], wmaLen: number, longRoc: number, shortRoc: number): (number | null)[] {
+  const rl = roc(close, longRoc)
+  const rs = roc(close, shortRoc)
+  const sum = rl.map((v, i) => (v === null || rs[i] === null ? null : v + (rs[i] as number)))
+  return wma(sum, wmaLen)
+}
+
+export const hmaCoppockTrend: IndicatorDef = {
+  id: 'hma_coppock',
+  label: 'HMA 31 + Supertrend 2,2 + Coppock signals',
+  shortLabel: 'HMA+ST+Cop',
+  placement: 'overlay',
+  params: [
+    { key: 'hmaLen', label: 'HMA length', default: 31, min: 1, max: 500, step: 1 },
+    { key: 'stAtrLen', label: 'Supertrend ATR period', default: 2, min: 1, max: 100, step: 1 },
+    { key: 'stFactor', label: 'Supertrend factor', default: 2, min: 0.5, max: 20, step: 0.1 },
+    { key: 'showProbable', label: 'Show probable buy / sell (1/0)', default: 1, min: 0, max: 1, step: 1 },
+    { key: 'showRawST', label: 'Show raw Supertrend flips (1/0)', default: 0, min: 0, max: 1, step: 1 },
+  ],
+  compute(candles, params): IndicatorOutput[] {
+    const close = candles.map((c) => c.close)
+    const hm = hma(close, ri(params, 'hmaLen', 31))
+    const { st, dir } = supertrend(candles, params['stFactor'] ?? 2, ri(params, 'stAtrLen', 2))
+    const split = stSplit(st, dir)
+    return [
+      { name: 'HMA 31', values: hm, color: '#26a69a', style: 'line' },
+      { name: 'Supertrend up', values: split.up, color: '#26a69a' },
+      { name: 'Supertrend down', values: split.dn, color: '#ef5350' },
+    ]
+  },
+}
+
+/** BUY/SELL = Supertrend flip + price vs HMA + Coppock side of zero (Pine's confirmed signal).
+ *  PROB = Supertrend already in trend + Coppock crosses zero (skipped on bars with a confirmed signal). */
+function hmaCoppockSignals(candles: Candle[], params: Record<string, number>): Signal[] {
+  const close = candles.map((c) => c.close)
+  const hm = hma(close, ri(params, 'hmaLen', 31))
+  const { dir } = supertrend(candles, params['stFactor'] ?? 2, ri(params, 'stAtrLen', 2))
+  const cop = coppockCurve(close, 9, 13, 17)
+  const showProb = (params['showProbable'] ?? 1) >= 0.5
+  const showRaw = (params['showRawST'] ?? 0) >= 0.5
+  const out: Signal[] = []
+  for (let i = 1; i < candles.length; i++) {
+    const c = candles[i]
+    const h = hm[i]
+    const cv = cop[i]
+    const cvPrev = cop[i - 1]
+    const stBull = dir[i] < 0
+    const stBear = dir[i] > 0
+    const stBullFlip = stBull && dir[i - 1] >= 0
+    const stBearFlip = stBear && dir[i - 1] <= 0
+    const copUp = cv !== null && cvPrev !== null && cv > 0 && cvPrev <= 0
+    const copDn = cv !== null && cvPrev !== null && cv < 0 && cvPrev >= 0
+
+    const buy = stBullFlip && h !== null && c.close > h && cv !== null && cv > 0
+    const sell = stBearFlip && h !== null && c.close < h && cv !== null && cv < 0
+    if (buy) out.push({ time: c.time, price: c.low, kind: 'buy', text: 'BUY' })
+    else if (sell) out.push({ time: c.time, price: c.high, kind: 'sell', text: 'SELL' })
+    else if (showProb && stBull && copUp) out.push({ time: c.time, price: c.low, kind: 'buy', text: 'PROB BUY', color: 'rgba(0, 230, 118, 0.55)' })
+    else if (showProb && stBear && copDn) out.push({ time: c.time, price: c.high, kind: 'sell', text: 'PROB SELL', color: 'rgba(255, 82, 82, 0.55)' })
+
+    if (showRaw && stBullFlip) out.push({ time: c.time, price: c.low, kind: 'flag', text: '', shape: 'dot', color: 'rgba(0, 230, 118, 0.6)' })
+    if (showRaw && stBearFlip) out.push({ time: c.time, price: c.high, kind: 'flag', text: '', shape: 'dot', color: 'rgba(255, 82, 82, 0.6)' })
+  }
+  return out
+}
+
+export const coppockCurveIndicator: IndicatorDef = {
+  id: 'coppock_curve',
+  label: 'Coppock Curve (WMA 9, RoC 13 + 17)',
+  shortLabel: 'Coppock',
+  placement: 'pane',
+  params: [
+    { key: 'wmaLen', label: 'WMA length', default: 9, min: 1, max: 200, step: 1 },
+    { key: 'longRoc', label: 'Long RoC length', default: 13, min: 1, max: 200, step: 1 },
+    { key: 'shortRoc', label: 'Short RoC length', default: 17, min: 1, max: 200, step: 1 },
+  ],
+  compute(candles, params): IndicatorOutput[] {
+    const close = candles.map((c) => c.close)
+    const cop = coppockCurve(close, ri(params, 'wmaLen', 9), ri(params, 'longRoc', 13), ri(params, 'shortRoc', 17))
+    return [
+      { name: 'Zero Line', values: candles.map(() => 0), color: '#787b86', style: 'dashed' },
+      { name: 'Coppock', values: cop, color: '#00e676' },
+    ]
+  },
+}
+
+// ---------------------------------------------------------------------------
 // indicator2 — EMA47 Band + Supertrend (validated)
 // ---------------------------------------------------------------------------
 export const ema47Supertrend: IndicatorDef = {
@@ -1428,6 +1531,7 @@ export const FULL_HISTORY_INDICATOR_IDS = new Set<string>([lionIndicator.id, sha
 const SIGNAL_SOURCES: Record<string, (candles: Candle[], params: Record<string, number>) => Signal[]> = {
   [chotaPanditV3.id]: chotaSignals,
   [hma31Supertrend.id]: hma31Signals,
+  [hmaCoppockTrend.id]: hmaCoppockSignals,
   [ema47Supertrend.id]: ema47Signals,
   [blastCandle.id]: blastSignals,
   [daddyHome.id]: daddyHomeSignals,
@@ -1575,6 +1679,8 @@ export function getSignalSource(
 export const CUSTOM_INDICATORS: IndicatorDef[] = [
   chotaPanditV3,
   hma31Supertrend,
+  hmaCoppockTrend,
+  coppockCurveIndicator,
   ema47Supertrend,
   blastCandle,
   daddyHome,

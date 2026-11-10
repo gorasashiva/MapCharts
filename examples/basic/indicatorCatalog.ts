@@ -28,6 +28,8 @@ const CATALOG: Record<string, CatalogEntry> = {
   cvd: { family: 'Volume & Flow', description: 'Cumulative Volume Delta — running buy-minus-sell volume, showing which side has been aggressive.' },
   chota_pandit_v3: { family: 'Signals & Strategies', custom: true, description: 'CHOTA pandit V3 buy / sell signal system ported from Pine.' },
   hma31_st: { family: 'Trend', custom: true, description: 'Hull MA 31 combined with a Supertrend — trend direction with fast turn detection.' },
+  hma_coppock: { family: 'Signals & Strategies', custom: true, description: 'Hull MA 31 with a Supertrend 2,2 and BUY / SELL signals confirmed by the Coppock curve (probable signals on zero crosses), ported from Pine.' },
+  coppock_curve: { family: 'Momentum', custom: true, description: 'Coppock curve: WMA 9 of the 13 and 17 bar rate of change, with the zero line. Crossing above zero is the classic long-term buy trigger.' },
   ema47_st: { family: 'Trend', custom: true, description: 'EMA 47 band with a Supertrend overlay for trend-following entries.' },
   blast_candle: { family: 'Signals & Strategies', custom: true, description: 'Flags unusually large “blast” candles that often start or end impulsive moves.' },
   daddy_home: { family: 'Structure & Levels', custom: true, description: 'Higher-high / lower-low zones combined with VWAP-based order-flow context.' },
