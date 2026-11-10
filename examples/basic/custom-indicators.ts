@@ -13,6 +13,7 @@
 //   • input(close, "Source")  — params are numeric, so source is fixed to close.
 import { INDICATORS, getIndicator, type Candle, type IndicatorDef, type IndicatorOutput } from '../../src/index'
 import type { Converters } from '../../src/drawings/types'
+import { parabolicSar } from '../../src/overlays/parabolicSar'
 import type { StrategyTrade } from '../../src/strategy/types'
 import { shankyCombo, computeShankyModel, drawShankyCombo, type CanvasIndicatorContext, type ShankyModel } from './shankyCombo'
 import { zigzagFib, computeZigzagFibModel, drawZigzagFib, type ZigzagFibModel } from './zigzagFib'
@@ -362,6 +363,32 @@ function coppockCurve(close: number[], wmaLen: number, longRoc: number, shortRoc
   const rs = roc(close, shortRoc)
   const sum = rl.map((v, i) => (v === null || rs[i] === null ? null : v + (rs[i] as number)))
   return wma(sum, wmaLen)
+}
+
+/** SAR split by trend: the value sits below price in an uptrend and above it in a downtrend. */
+function sarSplit(sar: (number | null)[], candles: Candle[]): { up: (number | null)[]; dn: (number | null)[] } {
+  const up: (number | null)[] = sar.map((v, i) => (v !== null && v < candles[i].close ? v : null))
+  const dn: (number | null)[] = sar.map((v, i) => (v !== null && v >= candles[i].close ? v : null))
+  return { up, dn }
+}
+
+export const parabolicSarIndicator: IndicatorDef = {
+  id: 'parabolic_sar',
+  label: 'Parabolic SAR',
+  shortLabel: 'PSAR',
+  placement: 'overlay',
+  params: [
+    { key: 'step', label: 'Acceleration step', default: 0.02, min: 0.001, max: 1, step: 0.001 },
+    { key: 'maxStep', label: 'Maximum acceleration', default: 0.2, min: 0.01, max: 1, step: 0.01 },
+  ],
+  compute(candles, params): IndicatorOutput[] {
+    const sar = parabolicSar(candles, params['step'] ?? 0.02, params['maxStep'] ?? 0.2)
+    const split = sarSplit(sar, candles)
+    return [
+      { name: 'PSAR up', values: split.up, color: '#26a69a', style: 'dots' },
+      { name: 'PSAR down', values: split.dn, color: '#ef5350', style: 'dots' },
+    ]
+  },
 }
 
 export const hmaCoppockTrend: IndicatorDef = {
@@ -1681,6 +1708,7 @@ export const CUSTOM_INDICATORS: IndicatorDef[] = [
   hma31Supertrend,
   hmaCoppockTrend,
   coppockCurveIndicator,
+  parabolicSarIndicator,
   ema47Supertrend,
   blastCandle,
   daddyHome,

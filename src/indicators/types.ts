@@ -3,7 +3,7 @@ import type { Candle } from '../core/types'
 /** 'overlay' renders on the price pane; 'pane' gets its own sub-pane below. */
 export type IndicatorPlacement = 'overlay' | 'pane'
 
-export type PlotStyle = 'line' | 'histogram' | 'dashed'
+export type PlotStyle = 'line' | 'histogram' | 'dashed' | 'dots'
 
 export interface IndicatorOutput {
   name: string // e.g. "basis", "upper", "signal"

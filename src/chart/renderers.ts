@@ -769,6 +769,22 @@ export function drawIndicatorOutput(
   const style = output.style ?? 'line'
   const last = Math.min(to, output.values.length - 1)
   const spacing = ts.barSpacing()
+  if (style === 'dots') {
+    // One small dot per bar (Parabolic SAR style). Dots are not joined.
+    const r = Math.min(3, Math.max(1.5, spacing * 0.3))
+    ctx.fillStyle = output.color
+    ctx.beginPath()
+    for (let i = Math.max(0, from); i <= last; i++) {
+      const v = output.values[i]
+      if (v == null || !isFinite(v)) continue
+      const x = ts.centerX(i)
+      const y = scale.priceToY(v)
+      ctx.moveTo(x + r, y)
+      ctx.arc(x, y, r, 0, Math.PI * 2)
+    }
+    ctx.fill()
+    return
+  }
   if (style === 'histogram') {
     const w = Math.max(1, Math.floor(spacing * 0.6) || 1)
     // Baseline at value 0, clamped into the pane.
