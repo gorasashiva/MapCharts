@@ -20,6 +20,7 @@ import { zigzagFib, computeZigzagFibModel, drawZigzagFib, type ZigzagFibModel } 
 import { sessionReversal, computeSessionReversalModel, drawSessionReversal, type SessionReversalModel } from './sessionReversal'
 import { rangeBreakout, computeRangeBreakoutModel, drawRangeBreakout, rangeBreakoutTrades, type RangeBreakoutModel } from './rangeBreakout'
 import { sessionsIndicator, computeSessionsModel, drawSessions, type SessionsModel } from './sessions'
+import { sessionsV2Indicator, computeSessionsV2Model, drawSessionsV2, type SessionsV2Model } from './sessionsV2'
 import { marketStructure, computeMarketStructureModel, drawMarketStructure, marketStructureTrades, type MarketStructureModel } from './marketStructure'
 import { theMap, computeTheMapModel, drawTheMap, type TheMapModel } from './theMap'
 import { theMapV2, computeTheMapV2Model, drawTheMapV2, type TheMapV2Model } from './theMapV2'
@@ -1553,7 +1554,7 @@ function salaarSignals(candles: Candle[], params: Record<string, number>): Signa
  *  leg a full recompute would find, silently freezing the plotted levels.
  *  See lionPivots/lionFindLeg above: the swing search needs pivots from the
  *  full loaded history, not just the last `warmupBars` candles. */
-export const FULL_HISTORY_INDICATOR_IDS = new Set<string>([lionIndicator.id, shadow1sc.id, zigzagFib.id, sessionReversal.id, rangeBreakout.id, renkoFade.id, sessionsIndicator.id, marketStructure.id, mtfCisd.id, hlBlocks.id, aiTrades.id, bulbArrow.id, flyingCpr.id, tpoFade.id, fvgMid.id, tpoTv.id, vwapEmaAngle.id, dcCprBb.id, nyFade.id])
+export const FULL_HISTORY_INDICATOR_IDS = new Set<string>([lionIndicator.id, shadow1sc.id, zigzagFib.id, sessionReversal.id, rangeBreakout.id, renkoFade.id, sessionsIndicator.id, sessionsV2Indicator.id, marketStructure.id, mtfCisd.id, hlBlocks.id, aiTrades.id, bulbArrow.id, flyingCpr.id, tpoFade.id, fvgMid.id, tpoTv.id, vwapEmaAngle.id, dcCprBb.id, nyFade.id])
 
 const SIGNAL_SOURCES: Record<string, (candles: Candle[], params: Record<string, number>) => Signal[]> = {
   [chotaPanditV3.id]: chotaSignals,
@@ -1617,6 +1618,10 @@ const CANVAS_SOURCES: Record<string, CanvasSource> = {
   [sessionsIndicator.id]: {
     compute: computeSessionsModel,
     draw: (g, conv, rect, candles, model, ctx) => drawSessions(g, conv, rect, candles, model as SessionsModel, ctx),
+  },
+  [sessionsV2Indicator.id]: {
+    compute: computeSessionsV2Model,
+    draw: (g, conv, rect, candles, model, ctx) => drawSessionsV2(g, conv, rect, candles, model as SessionsV2Model, ctx),
   },
   [marketStructure.id]: {
     compute: computeMarketStructureModel,
@@ -1722,6 +1727,7 @@ export const CUSTOM_INDICATORS: IndicatorDef[] = [
   rangeBreakout,
   renkoFade,
   sessionsIndicator,
+  sessionsV2Indicator,
   marketStructure,
   theMap,
   theMapV2,

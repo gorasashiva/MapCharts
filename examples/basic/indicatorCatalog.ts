@@ -43,6 +43,7 @@ const CATALOG: Record<string, CatalogEntry> = {
   range_breakout_0530: { family: 'Signals & Strategies', custom: true, description: 'IST 05:30–05:45 opening-range breakout (v2) with stop / target markers.' },
   renko_exhaustion_fade: { family: 'Signals & Strategies', custom: true, description: 'Renko strategy: fades the first reversal brick after a long run (gold research: $4 box, 8 bricks, TP 2 / SL 3). Entry, TP, SL and exit labels.' },
   sessions: { family: 'Structure & Levels', custom: true, description: 'Asia / London / New York session boxes in each city’s local time, plus the previous 1H and 4H high / low.' },
+  sessions_v2: { family: 'Volume & Flow', custom: true, description: 'Volume profile for every Asia / London / New York session, with POC, VAH and VAL lines, a histogram, value-area shading and full colour and style options.' },
   market_structure: { family: 'Structure & Levels', custom: true, description: 'Labels HH / HL / LH / LL swings, BOS and CHoCH breaks, and filters trend from chop.' },
   the_map: { family: 'Structure & Levels', custom: true, description: 'THE MAP clone — GEX, open-interest and 0DTE option levels projected onto the chart.' },
   the_map_v2: { family: 'Structure & Levels', custom: true, description: 'MAP V2 — THE MAP with guide rules: true gamma-flip regime, fresh retests only, regime-aware entries, walls on the right side of price.' },
