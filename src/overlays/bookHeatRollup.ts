@@ -75,12 +75,20 @@ export interface MinuteRow {
   m: number
   step: number
   mid: number
+  /** Mean best bid and best ask over the minute's snapshots. */
+  bb: number
+  ba: number
   bins: [number, number, number][]
+  /** Trades in the minute, by price bin: [bin index, buy USD, sell USD, count]. */
+  tr: [number, number, number, number][]
 }
 
 /** Groups snapshots into minutes and averages each bin over the minute's snapshots. */
 export class MinuteAccumulator {
-  private cur: { m: number; n: number; midSum: number; midN: number; bins: Map<number, [number, number]> } | null = null
+  private cur: { m: number; n: number; midSum: number; midN: number; bidSum: number; askSum: number; bins: Map<number, [number, number]> } | null = null
+  /** Trades by minute and price bin: [buy USD, sell USD, count]. Kept until their minute is written. */
+  private trades = new Map<number, Map<number, [number, number, number]>>()
+  private lastEmitted = Number.NEGATIVE_INFINITY
 
   private readonly step: number
 
@@ -96,7 +104,7 @@ export class MinuteAccumulator {
       const row = this.flush()
       if (row) done.push(row)
     }
-    if (!this.cur) this.cur = { m, n: 0, midSum: 0, midN: 0, bins: new Map() }
+    if (!this.cur) this.cur = { m, n: 0, midSum: 0, midN: 0, bidSum: 0, askSum: 0, bins: new Map() }
     const c = this.cur
     c.n++
     const bb = s.bids[0]?.[0]
@@ -104,10 +112,26 @@ export class MinuteAccumulator {
     if (bb > 0 && ba > 0) {
       c.midSum += (bb + ba) / 2
       c.midN++
+      c.bidSum += bb
+      c.askSum += ba
     }
     for (const [p, q] of s.bids) this.put(c.bins, p, q, 0)
     for (const [p, q] of s.asks) this.put(c.bins, p, q, 1)
     return done
+  }
+
+  /** Adds one trade to its minute and bin. Trades carry their own time, so they may come before that minute's book. */
+  addTrade(t: { recvMs: number; price: number; qty: number; buy: boolean }): void {
+    const m = Math.floor(t.recvMs / MINUTE_MS) * MINUTE_MS
+    if (m <= this.lastEmitted) return // that minute is already written
+    const byBin = this.trades.get(m) ?? new Map<number, [number, number, number]>()
+    this.trades.set(m, byBin)
+    const k = Math.floor(t.price / this.step)
+    const e = byBin.get(k) ?? [0, 0, 0]
+    if (t.buy) e[0] += t.price * t.qty
+    else e[1] += t.price * t.qty
+    e[2]++
+    byBin.set(k, e)
   }
 
   private put(bins: Map<number, [number, number]>, price: number, qty: number, side: 0 | 1): void {
@@ -125,7 +149,12 @@ export class MinuteAccumulator {
     const bins: [number, number, number][] = []
     for (const [k, [b, a]] of c.bins) bins.push([k, b / c.n, a / c.n])
     bins.sort((x, y) => x[0] - y[0])
-    return { m: c.m, step: this.step, mid: c.midSum / c.midN, bins }
+    const tr: [number, number, number, number][] = []
+    const byBin = this.trades.get(c.m)
+    if (byBin) for (const [k, [b, a, n]] of byBin) tr.push([k, b, a, n])
+    for (const key of [...this.trades.keys()]) if (key <= c.m) this.trades.delete(key)
+    this.lastEmitted = c.m
+    return { m: c.m, step: this.step, mid: c.midSum / c.midN, bb: c.bidSum / c.n, ba: c.askSum / c.n, bins, tr }
   }
 }
 
@@ -192,4 +221,60 @@ export function heatGridFromRows(data: MinuteRow[], o: RollupGridOptions): HeatG
   const sorted = cells.map((c) => c.value).sort((x, y) => x - y)
   const scale = sorted.length ? Math.max(1, sorted[Math.floor(sorted.length * 0.95)] ?? sorted[sorted.length - 1]) : 1
   return { t0: o.from, colMs: o.colMs, cols, lo: kMin * step, step: step * f, rows, cells, scale, mid, minutes: inWindow.length }
+}
+
+/** A trade bubble: USD bought and sold in one column × row of the grid. */
+export interface GridTrade {
+  col: number
+  row: number
+  buy: number
+  sell: number
+  n: number
+}
+
+/** Best bid and ask for one column (mean over its minutes). */
+export interface GridBbo {
+  col: number
+  bid: number
+  ask: number
+}
+
+/**
+ * Trades and best bid / ask on the same grid as heatGridFromRows (`grid` is its result, with the same
+ * column width and price rows). Only minutes inside [from, to) count.
+ */
+export function tradesAndBboFromRows(
+  data: MinuteRow[],
+  grid: { t0: number; colMs: number; cols: number; lo: number; step: number; rows: number },
+  o: { from: number; to: number },
+): { trades: GridTrade[]; bbo: GridBbo[] } {
+  const base = data.find((r) => r.m >= o.from && r.m < o.to)?.step
+  if (!base) return { trades: [], bbo: [] }
+  const kMin = Math.round(grid.lo / base)
+  const f = Math.max(1, Math.round(grid.step / base))
+  const tradeMap = new Map<string, GridTrade>()
+  const bboSum = new Map<number, { bid: number; ask: number; n: number }>()
+  for (const r of data) {
+    if (r.m < o.from || r.m >= o.to) continue
+    const col = Math.min(grid.cols - 1, Math.max(0, Math.floor((r.m - grid.t0) / grid.colMs)))
+    const b = bboSum.get(col) ?? { bid: 0, ask: 0, n: 0 }
+    b.bid += r.bb ?? 0
+    b.ask += r.ba ?? 0
+    b.n++
+    bboSum.set(col, b)
+    for (const [k, buy, sell, n] of r.tr ?? []) {
+      const row = Math.floor((k - kMin) / f)
+      if (row < 0 || row >= grid.rows) continue
+      const key = `${col}|${row}`
+      const t = tradeMap.get(key) ?? { col, row, buy: 0, sell: 0, n: 0 }
+      t.buy += buy
+      t.sell += sell
+      t.n += n
+      tradeMap.set(key, t)
+    }
+  }
+  const bbo = [...bboSum.entries()]
+    .sort((x, y) => x[0] - y[0])
+    .map(([col, s]) => ({ col, bid: s.bid / s.n, ask: s.ask / s.n }))
+  return { trades: [...tradeMap.values()], bbo }
 }

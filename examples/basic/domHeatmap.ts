@@ -15,6 +15,7 @@ import type { Candle, IndicatorDef, IndicatorParam } from '../../src/index'
 import type { Converters } from '../../src/drawings/types'
 import type { DepthSnapshot } from '../../src/data/types'
 import { bandRuns, buildHeatGrid, levelLabels, strongRows, type BookSnap, type HeatGrid } from '../../src/overlays/domHeatmapModel'
+import type { GridBbo, GridTrade } from '../../src/overlays/bookHeatRollup'
 import { PALETTE, COL, colorOpts } from './flyingCpr'
 import { rgba, type Rect } from './canvasPlot'
 import type { CanvasIndicatorContext } from './shankyCombo'
@@ -80,6 +81,14 @@ export const domHeatmap: IndicatorDef = {
     num('minUsd', 'Ignore resting size below (USD)', 0, G_PRICE, 0, 1_000_000, 100),
     num('levels', 'Strongest price levels shown', 6, G_PRICE, 1, 40, 1),
     num('transparency', 'Transparency (%, higher = fainter)', 65, 'Display', 0, 95, 1),
+    pick('showBbo', 'Best bid / ask line', 1, 'Display', [
+      { value: 0, label: 'Off' },
+      { value: 1, label: 'On' },
+    ]),
+    pick('showTrades', 'Trade bubbles', 1, 'Display', [
+      { value: 0, label: 'Off' },
+      { value: 1, label: 'On' },
+    ]),
     colour('bidColor', 'Buy limits', 'Green'),
     colour('askColor', 'Sell limits', 'Purple'),
   ],
@@ -96,6 +105,10 @@ export interface DomHeatmapModel {
   waiting: string
   /** Shown under the waiting line: e.g. why the history isn't there. */
   note: string
+  trades: GridTrade[]
+  bbo: GridBbo[]
+  showTrades: boolean
+  showBbo: boolean
 }
 
 const hexOf = (idx: number, fallback: string): string => (PALETTE[idx] ? PALETTE[idx][1] : fallback)
@@ -116,6 +129,8 @@ interface HistoryResponse {
   cells: [number, number, number, number][]
   mid: number | null
   minutes: number
+  trades: [number, number, number, number, number][]
+  bbo: [number, number, number][]
   error?: string
 }
 interface HistoryState {
@@ -123,6 +138,8 @@ interface HistoryState {
   inflight: boolean
   grid: HeatGrid | null
   minutes: number
+  trades: GridTrade[]
+  bbo: GridBbo[]
   error: string | null
 }
 const histories = new Map<string, HistoryState>()
@@ -146,7 +163,7 @@ function historyFor(symbol: string, p: Record<string, number>, now: number): His
   const key = [symbol, rangeMin, rows, minUsd].join('|')
   let st = histories.get(key)
   if (!st) {
-    st = { at: 0, inflight: false, grid: null, minutes: 0, error: null }
+    st = { at: 0, inflight: false, grid: null, minutes: 0, trades: [], bbo: [], error: null }
     histories.set(key, st)
   }
   if (!st.inflight && now - st.at > HISTORY_EVERY_MS) {
@@ -165,6 +182,8 @@ function historyFor(symbol: string, p: Record<string, number>, now: number): His
         const j = (await r.json()) as HistoryResponse
         if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`)
         entry.minutes = j.minutes
+        entry.trades = (j.trades ?? []).map(([col, row, buy, sell, n]) => ({ col, row, buy, sell, n }))
+        entry.bbo = (j.bbo ?? []).map(([col, bid, ask]) => ({ col, bid, ask }))
         entry.grid = {
           t0: j.t0,
           colMs: j.colMs,
@@ -206,11 +225,15 @@ function computeGridModel(_candles: Candle[], p: Record<string, number>, ctx: Ca
     askColor: hexOf(Math.round(p.askColor ?? (COL as Record<string, number>).Purple), '#9C27B0'),
     waiting: '',
     note: '',
+    trades: [],
+    bbo: [],
+    showTrades: (p.showTrades ?? 1) !== 0,
+    showBbo: (p.showBbo ?? 1) !== 0,
   }
   const hist = historyFor(ctx.symbol, p, now)
   if (hist.grid && !hist.error) {
     const note = hist.minutes === 0 ? 'No recorded book in this range yet' : ''
-    return { ...base, grid: hist.grid, note }
+    return { ...base, grid: hist.grid, note, trades: hist.trades, bbo: hist.bbo }
   }
 
   // Fallback: the live samples since this chart opened, last hour, around the current mid.
@@ -253,6 +276,43 @@ export function drawDomHeatmap(g: CanvasRenderingContext2D, conv: Converters, re
       const yBot = conv.priceToY(grid.lo + r.row * grid.step)
       g.fillStyle = rgba(r.bid ? m.bidColor : m.askColor, Math.max(0.05, m.opacity * (0.35 + 0.65 * r.intensity)))
       g.fillRect(x0, Math.min(yTop, yBot), Math.max(1, x1 - x0), Math.max(1, Math.abs(yBot - yTop) - 0.5))
+    }
+    const colX = (col: number): number => conv.timeToX(grid.t0 + (col + 0.5) * grid.colMs)
+    const rowY = (row: number): number => conv.priceToY(grid.lo + (row + 0.5) * grid.step)
+    // Best bid (buy colour) and best ask (sell colour) per column, as lines.
+    if (m.showBbo && m.bbo.length > 1) {
+      for (const side of ['bid', 'ask'] as const) {
+        g.strokeStyle = rgba(side === 'bid' ? m.bidColor : m.askColor, 0.9)
+        g.lineWidth = 1.5
+        g.beginPath()
+        m.bbo.forEach((b, i) => {
+          const x = colX(b.col)
+          const y = conv.priceToY(b[side])
+          if (i === 0) g.moveTo(x, y)
+          else g.lineTo(x, y)
+        })
+        g.stroke()
+      }
+    }
+    // Trades as bubbles: area grows with USD traded, buys in the buy colour, sells in the sell colour.
+    if (m.showTrades && m.trades.length) {
+      let maxUsd = 1
+      for (const t of m.trades) maxUsd = Math.max(maxUsd, t.buy + t.sell)
+      for (const t of m.trades) {
+        const x = colX(t.col)
+        if (x < rect.x || x > right) continue
+        const y = rowY(t.row)
+        for (const [usd, color] of [
+          [t.buy, m.bidColor],
+          [t.sell, m.askColor],
+        ] as const) {
+          if (usd <= 0) continue
+          g.beginPath()
+          g.arc(x, y, 2 + 12 * Math.sqrt(usd / maxUsd), 0, Math.PI * 2)
+          g.fillStyle = rgba(color, 0.55)
+          g.fill()
+        }
+      }
     }
     // Size of each strong level, at the right edge (the DeepDOM volume column).
     g.font = FONT

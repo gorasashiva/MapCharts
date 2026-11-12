@@ -20,6 +20,7 @@ import {
   ROLLUP_BAND_PCT,
   binStepFor,
   heatGridFromRows,
+  tradesAndBboFromRows,
   type MinuteRow,
 } from '../src/overlays/bookHeatRollup.ts'
 
@@ -115,6 +116,10 @@ export async function rollupRange(dir: string, symbol: string, to: number, from?
     for (const line of text.split('\n')) {
       const rec = parseLine(line)
       if (!rec) continue
+      if (rec.kind === 'trade') {
+        if (rec.recvMs >= start && rec.recvMs < toMin) acc.addTrade(rec)
+        continue
+      }
       const snap = replayer.feed(rec)
       if (snap) for (const row of acc.add(snap)) if (row.m >= start && row.m < toMin) rows.push(row)
     }
@@ -208,6 +213,10 @@ export interface HeatResponse {
   minutes: number
   /** [col, row, bid (1) or ask (0), value in USD] */
   cells: [number, number, number, number][]
+  /** Trade bubbles: [col, row, USD bought, USD sold, trade count] */
+  trades: [number, number, number, number, number][]
+  /** Best bid and ask per column: [col, bid, ask] */
+  bbo: [number, number, number][]
 }
 
 /** The grid for one request, from the rollups. */
@@ -215,6 +224,7 @@ export async function heatGrid(dir: string, p: HeatParams): Promise<HeatResponse
   const colMs = Math.max(MINUTE_MS, Math.ceil((p.to - p.from) / p.cols / MINUTE_MS) * MINUTE_MS)
   const data = await readRollupRows(dir, p.symbol, p.from, p.to)
   const g = heatGridFromRows(data, { from: p.from, to: p.to, colMs, maxRows: p.rows, minUsd: p.minUsd })
+  const tb = tradesAndBboFromRows(data, g, { from: p.from, to: p.to })
   return {
     symbol: p.symbol,
     from: p.from,
@@ -229,6 +239,8 @@ export async function heatGrid(dir: string, p: HeatParams): Promise<HeatResponse
     mid: g.mid,
     minutes: g.minutes,
     cells: g.cells.map((c) => [c.col, c.row, c.bid ? 1 : 0, Math.round(c.value * 100) / 100]),
+    trades: tb.trades.map((t) => [t.col, t.row, Math.round(t.buy), Math.round(t.sell), t.n]),
+    bbo: tb.bbo.map((b) => [b.col, b.bid, b.ask]),
   }
 }
 

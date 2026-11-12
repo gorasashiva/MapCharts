@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MinuteAccumulator, heatGridFromRows, type MinuteRow } from './bookHeatRollup'
+import { MinuteAccumulator, heatGridFromRows, tradesAndBboFromRows, type MinuteRow } from './bookHeatRollup'
 import type { BookSnap } from './domHeatmapModel'
 
 const M = 60_000
@@ -31,8 +31,42 @@ describe('MinuteAccumulator', () => {
   })
 })
 
+describe('trades and best bid / ask in rollups', () => {
+  it('attaches trades to their minute and bin, buy and sell apart, and keeps best prices', () => {
+    const acc = new MinuteAccumulator(1)
+    acc.add(snap(1_000, [[100, 2]], [[101, 1]]))
+    acc.addTrade({ recvMs: 2_000, price: 100.5, qty: 2, buy: true })
+    acc.addTrade({ recvMs: 3_000, price: 100.2, qty: 1, buy: false })
+    acc.addTrade({ recvMs: M + 1_000, price: 101, qty: 1, buy: true }) // belongs to the next minute
+    const row = acc.add(snap(M + 500, [[100, 2]], [[101, 1]]))[0]
+    expect(row.bb).toBeCloseTo(100, 9)
+    expect(row.ba).toBeCloseTo(101, 9)
+    const bin100 = row.tr.find((t) => t[0] === 100)
+    expect(bin100?.[1]).toBeCloseTo(201, 9) // buy 100.5 × 2
+    expect(bin100?.[2]).toBeCloseTo(100.2, 9) // sell 100.2 × 1
+    expect(bin100?.[3]).toBe(2)
+    expect(row.tr.find((t) => t[0] === 101)).toBeUndefined()
+  })
+
+  it('places trades and best prices on the grid cells of their minute', () => {
+    const rows: MinuteRow[] = [
+      { m: 0, step: 1, mid: 100, bb: 99, ba: 101, bins: [[99, 10, 0]], tr: [[99, 40, 0, 1]] },
+      { m: M, step: 1, mid: 100, bb: 100, ba: 102, bins: [[99, 10, 0]], tr: [[99, 0, 60, 2]] },
+    ]
+    const grid = heatGridFromRows(rows, { from: 0, to: 2 * M, colMs: M, maxRows: 100, minUsd: 0 })
+    const tb = tradesAndBboFromRows(rows, grid, { from: 0, to: 2 * M })
+    expect(tb.trades).toHaveLength(2)
+    expect(tb.trades.find((t) => t.col === 0)).toMatchObject({ buy: 40, sell: 0, n: 1 })
+    expect(tb.trades.find((t) => t.col === 1)).toMatchObject({ buy: 0, sell: 60, n: 2 })
+    expect(tb.bbo.map((b) => [b.col, b.bid, b.ask])).toEqual([
+      [0, 99, 101],
+      [1, 100, 102],
+    ])
+  })
+})
+
 describe('heatGridFromRows', () => {
-  const row = (m: number, bins: [number, number, number][]): MinuteRow => ({ m, step: 1, mid: 100, bins })
+  const row = (m: number, bins: [number, number, number][]): MinuteRow => ({ m, step: 1, mid: 100, bb: 99, ba: 101, bins, tr: [] })
 
   it('averages a column over its minutes and keeps absolute prices', () => {
     // window of 2 minutes in one column; bin 99 bid is 100 USD in minute 0 and 300 USD in minute 1
