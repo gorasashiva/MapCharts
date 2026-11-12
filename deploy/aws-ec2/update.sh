@@ -39,7 +39,7 @@ if [[ -n "$deployed" ]] && git cat-file -e "$deployed" 2>/dev/null; then known=t
 changed_units=()
 changed() { ! $known || ! git diff --quiet "$deployed" HEAD -- "$@"; }
 changed recorder/tapeRecorder.mjs src/overlays/takerOrders.ts && changed_units+=(candl-tape)
-changed recorder/bookRecorder.mjs src/overlays/bookTape.ts && changed_units+=(candl-book)
+changed recorder/bookRecorder.mjs src/overlays/bookTape.ts recorder/bookHeat.ts src/overlays/domHeatmapModel.ts && changed_units+=(candl-book)
 changed recorder/mapRecorder.mjs src/overlays/nyClock.ts && changed_units+=(candl-map)
 
 if $needs_setup; then

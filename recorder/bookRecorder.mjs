@@ -30,6 +30,7 @@ import { pipeline } from 'node:stream/promises'
 import { createGzip } from 'node:zlib'
 import path from 'node:path'
 import { encodeBook, encodeGap, encodeMeta, encodeTrade, hourKey } from '../src/overlays/bookTape.ts'
+import { handleBookHeat } from './bookHeat.ts'
 
 const SYMBOLS = (process.env.BOOK_SYMBOLS ?? 'XAUTUSD,BTCUSD,ETHUSD')
   .split(',')
@@ -276,6 +277,13 @@ function serve() {
   return new Promise((resolve) => {
     const server = createServer(async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://x')
+      if (url.pathname === '/book/heat') {
+        // history for the DOM Heatmap indicator: the recorded book binned as time × price (read-only)
+        const r = await handleBookHeat(url, DIR).catch((err) => ({ status: 500, body: JSON.stringify({ error: String(err?.message ?? err) }) }))
+        res.writeHead(r.status, { 'content-type': 'application/json', 'access-control-allow-origin': '*' })
+        res.end(r.body)
+        return
+      }
       const ok = url.pathname === '/book/status'
       res.writeHead(ok ? 200 : 404, { 'content-type': 'application/json', 'access-control-allow-origin': '*' })
       res.end(JSON.stringify(ok ? await status() : { error: 'not found' }))

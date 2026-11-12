@@ -29,6 +29,7 @@ export interface PaneProvider {
 }
 import { resolveIndicator, getSignalSource, getCanvasSource, FULL_HISTORY_INDICATOR_IDS, type CanvasSource, type Signal } from './custom-indicators'
 import { sampleCandles } from './sample-candles'
+import { domHeatmap, ensureDomHeatFeed } from './domHeatmap'
 import TradeRainOverlay from '../../src/overlays/tradeRain'
 import OrderFlowOverlay from '../../src/overlays/orderflow'
 import BuySellPollOverlay from '../../src/overlays/buySellPoll'
@@ -2287,6 +2288,8 @@ export class ChartPane {
       if (inst.visible === false) continue
       const src = getCanvasSource(inst.defId)
       if (!src) continue
+      // The DOM Heatmap samples the book itself; start that sampler once it is on.
+      if (inst.defId === domHeatmap.id) ensureDomHeatFeed(this.state.symbol, this.provider)
       const model = src.compute(this.candles, inst.params, cctx)
       this.canvasInds.push({ src, model, defId: inst.defId })
       // A Renko strategy (Renko Exhaustion Fade) fixes the chart's brick size to the one it trades.

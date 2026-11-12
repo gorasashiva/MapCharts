@@ -40,6 +40,7 @@ import {
   type GexHeatmapModel,
   type GexProfileModel,
 } from './gexDeep'
+import { domHeatmap, computeDomHeatmapModel, drawDomHeatmap, type DomHeatmapModel } from './domHeatmap'
 import { renkoFade, computeRenkoFadeModel, drawRenkoFade, renkoFadeTrades, type RenkoFadeModel } from './renkoFade'
 import { mtfCisd, computeMtfCisdModel, drawMtfCisd, type MtfCisdModel } from './mtfCisd'
 import { hlBlocks, computeHlBlocksModel, drawHlBlocks, type HlBlocksModel } from './hlBlocks'
@@ -1667,6 +1668,10 @@ const CANVAS_SOURCES: Record<string, CanvasSource> = {
     compute: computeGexHeatmapModel,
     draw: (g, conv, rect, candles, model, ctx) => drawGexHeatmap(g, conv, rect, candles, model as GexHeatmapModel, ctx),
   },
+  [domHeatmap.id]: {
+    compute: computeDomHeatmapModel,
+    draw: (g, conv, rect, candles, model, ctx) => drawDomHeatmap(g, conv, rect, candles, model as DomHeatmapModel, ctx),
+  },
   [gexProfileSplit.id]: {
     compute: computeGexProfileModel,
     draw: (g, conv, rect, candles, model, ctx) => drawGexProfileSplit(g, conv, rect, candles, model as GexProfileModel, ctx),
@@ -1762,6 +1767,7 @@ export const CUSTOM_INDICATORS: IndicatorDef[] = [
   gexSummary,
   gexHeatmap,
   gexProfileSplit,
+  domHeatmap,
   mtfCisd,
   hlBlocks,
   aiTrades,
