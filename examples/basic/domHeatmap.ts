@@ -1,12 +1,13 @@
 // DOM Heatmap — resting limit orders over time, drawn behind the candles, in the spirit of
-// DeepCharts' DeepDOM heatmap. Each column is a slice of time, each row a price band, and a
-// cell's brightness is the average resting size (USD) that stood there in that slice.
-// Green = resting buy limits (below mid), purple = resting sell limits (above mid).
+// DeepCharts' DeepDOM heatmap. Each column is a slice of time, each row an absolute price band, and a
+// band's brightness is the resting size (USD) that stood there. Only the strongest price levels are
+// drawn, as continuous bands with their size on the right edge.
+// Green = resting buy limits, purple = resting sell limits.
 //
-// Data: Delta's public depth feed (subscribeDepth), sampled every 500 ms and kept for one hour
-// while the indicator is on. The feed only sends the top levels, so the picture shows the book
-// near the touch, not the whole ladder. Exchanges don't publish past books, so history starts
-// when the indicator is turned on. Math: src/overlays/domHeatmapModel.ts.
+// History: the recorder on the instance keeps a one-minute summary of the recorded book (heatRollup.ts)
+// and serves it as /book/heat, covering everything recorded (up to 21 days). When that can't be reached
+// (e.g. a local dev page with no recorder), the chart uses the live depth feed from the last hour
+// instead, and a note says so.
 //
 // This is separate from GEX Heatmap (gexDeep.ts), which shows dealer gamma by strike from options.
 
@@ -21,9 +22,11 @@ import type { CanvasIndicatorContext } from './shankyCombo'
 const SAMPLE_MS = 500
 const KEEP_MS = 60 * 60_000
 const FONT = "600 10px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+const HISTORY_EVERY_MS = 30_000
+const HISTORY_COLUMNS = 600
 
 // ---------------------------------------------------------------------------
-// Sampler: one depth subscription per symbol, shared by every chart pane
+// Live sampler (fallback): one depth subscription per symbol, shared by every chart pane
 // ---------------------------------------------------------------------------
 export interface DepthSource {
   subscribeDepth(symbol: string, onDepth: (depth: DepthSnapshot) => void): () => void
@@ -53,7 +56,6 @@ export function ensureDomHeatFeed(symbol: string, src: DepthSource): void {
 // ---------------------------------------------------------------------------
 // Indicator
 // ---------------------------------------------------------------------------
-const toggle = (key: string, label: string, def: boolean, group: string): IndicatorParam => ({ key, label, default: def ? 1 : 0, toggle: true, group })
 const num = (key: string, label: string, def: number, group: string, min: number, max: number, step: number): IndicatorParam => ({ key, label, default: def, min, max, step, group })
 const pick = (key: string, label: string, def: number, group: string, options: { value: number; label: string }[]): IndicatorParam => ({ key, label, default: def, group, options })
 const colour = (key: string, label: string, name: string): IndicatorParam => pick(key, label, (COL as Record<string, number>)[name] ?? 0, 'Colours', colorOpts)
@@ -67,15 +69,19 @@ export const domHeatmap: IndicatorDef = {
   shortLabel: 'DOM Heatmap',
   placement: 'overlay',
   params: [
-    num('history', 'History (minutes, max 60)', 60, G_TIME, 5, 60, 1),
-    num('colSec', 'Column width (seconds)', 5, G_TIME, 1, 60, 1),
-    num('rows', 'Price rows', 60, G_PRICE, 10, 200, 1),
-    num('rangePct', 'Price band (± % of mid)', 1.5, G_PRICE, 0.2, 5, 0.1),
+    pick('range', 'History shown', 60, G_TIME, [
+      { value: 60, label: 'Last hour' },
+      { value: 360, label: 'Last 6 hours' },
+      { value: 1440, label: 'Last day' },
+      { value: 10080, label: 'Last 7 days' },
+      { value: 30240, label: 'Last 21 days (all recorded)' },
+    ]),
+    num('rows', 'Price rows (max)', 200, G_PRICE, 10, 400, 1),
     num('minUsd', 'Ignore resting size below (USD)', 0, G_PRICE, 0, 1_000_000, 100),
-    num('transparency', 'Transparency (%, higher = fainter)', 65, 'Display', 0, 95, 1),
     num('levels', 'Strongest price levels shown', 6, G_PRICE, 1, 40, 1),
-    colour('bidColor', 'Buy limits (below mid)', 'Green'),
-    colour('askColor', 'Sell limits (above mid)', 'Purple'),
+    num('transparency', 'Transparency (%, higher = fainter)', 65, 'Display', 0, 95, 1),
+    colour('bidColor', 'Buy limits', 'Green'),
+    colour('askColor', 'Sell limits', 'Purple'),
   ],
   compute: () => [],
 }
@@ -97,12 +103,8 @@ const hexOf = (idx: number, fallback: string): string => (PALETTE[idx] ? PALETTE
 const fmtUsd = (v: number): string => (v >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `${(v / 1e3).toFixed(1)}K` : `${Math.round(v)}`)
 
 // ---------------------------------------------------------------------------
-// History: the recorder on the instance serves the recorded book as a grid (/book/heat).
-// Refreshed every 15 s per setting set. If it can't be reached (e.g. a local dev page with no
-// recorder), the live sampler above is used and a note says so.
+// History from the recorder (/book/heat on the instance)
 // ---------------------------------------------------------------------------
-const HISTORY_EVERY_MS = 15_000
-
 interface HistoryResponse {
   t0: number
   colMs: number
@@ -112,13 +114,15 @@ interface HistoryResponse {
   rows: number
   scale: number
   cells: [number, number, number, number][]
-  snapCount: number
   mid: number | null
+  minutes: number
+  error?: string
 }
 interface HistoryState {
   at: number
   inflight: boolean
   grid: HeatGrid | null
+  minutes: number
   error: string | null
 }
 const histories = new Map<string, HistoryState>()
@@ -136,11 +140,13 @@ function bookBase(): string {
 }
 
 function historyFor(symbol: string, p: Record<string, number>, now: number): HistoryState {
-  const historyMin = Math.max(5, Math.min(60, Math.round(p.history ?? 60)))
-  const key = [symbol, historyMin, p.colSec, p.rows, p.rangePct, p.minUsd].join('|')
+  const rangeMin = Math.max(60, Math.round(p.range ?? 60))
+  const rows = Math.max(10, Math.round(p.rows ?? 200))
+  const minUsd = Math.max(0, p.minUsd ?? 0)
+  const key = [symbol, rangeMin, rows, minUsd].join('|')
   let st = histories.get(key)
   if (!st) {
-    st = { at: 0, inflight: false, grid: null, error: null }
+    st = { at: 0, inflight: false, grid: null, minutes: 0, error: null }
     histories.set(key, st)
   }
   if (!st.inflight && now - st.at > HISTORY_EVERY_MS) {
@@ -148,17 +154,17 @@ function historyFor(symbol: string, p: Record<string, number>, now: number): His
     entry.inflight = true
     const qs = new URLSearchParams({
       symbol,
-      from: String(now - historyMin * 60_000),
+      from: String(now - rangeMin * 60_000),
       to: String(now),
-      colSec: String(Math.max(1, p.colSec ?? 5)),
-      rows: String(Math.max(10, Math.round(p.rows ?? 60))),
-      rangePct: String(Math.max(0.2, p.rangePct ?? 1.5)),
-      minUsd: String(Math.max(0, p.minUsd ?? 0)),
+      cols: String(HISTORY_COLUMNS),
+      rows: String(rows),
+      minUsd: String(minUsd),
     })
     fetch(`${bookBase()}/book/heat?${qs.toString()}`)
       .then(async (r) => {
-        const j = (await r.json()) as HistoryResponse & { error?: string }
+        const j = (await r.json()) as HistoryResponse
         if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`)
+        entry.minutes = j.minutes
         entry.grid = {
           t0: j.t0,
           colMs: j.colMs,
@@ -172,6 +178,7 @@ function historyFor(symbol: string, p: Record<string, number>, now: number): His
         entry.error = null
       })
       .catch((err: unknown) => {
+        // A dev page has no /book/heat: the response is the page HTML, which fails to parse as JSON.
         entry.error = err instanceof Error ? err.message : String(err)
       })
       .finally(() => {
@@ -201,24 +208,27 @@ function computeGridModel(_candles: Candle[], p: Record<string, number>, ctx: Ca
     note: '',
   }
   const hist = historyFor(ctx.symbol, p, now)
-  if (hist.grid && !hist.error) return { ...base, grid: hist.grid }
+  if (hist.grid && !hist.error) {
+    const note = hist.minutes === 0 ? 'No recorded book in this range yet' : ''
+    return { ...base, grid: hist.grid, note }
+  }
 
+  // Fallback: the live samples since this chart opened, last hour, around the current mid.
   const feed = feeds.get(ctx.symbol)
   const last = feed?.snaps[feed.snaps.length - 1]
-  const note = hist.error ? `History unavailable (${hist.error}); showing live samples since this chart opened` : ''
+  const note = hist.error ? `History not available here (${hist.error}); showing the live samples since this chart opened` : ''
   if (!feed || !last) return { ...base, note, waiting: '⏳ Sampling the order book…' }
   const bestBid = last.bids[0]?.[0]
   const bestAsk = last.asks[0]?.[0]
   if (!(bestBid > 0) || !(bestAsk > 0)) return { ...base, note, waiting: '⚠ No book on the feed yet' }
   const mid = (bestBid + bestAsk) / 2
-  const historyMs = Math.max(5, Math.min(60, p.history ?? 60)) * 60_000
   const grid = buildHeatGrid(feed.snaps, {
     now,
-    historyMs,
-    colMs: Math.max(1, p.colSec ?? 5) * 1000,
+    historyMs: 60 * 60_000,
+    colMs: 5_000,
     mid,
-    rangePct: Math.max(0.002, (p.rangePct ?? 1.5) / 100),
-    rows: Math.max(10, Math.round(p.rows ?? 60)),
+    rangePct: 0.015,
+    rows: Math.max(10, Math.min(200, Math.round(p.rows ?? 200))),
     minUsd: Math.max(0, p.minUsd ?? 0),
   })
   return { ...base, grid, note }

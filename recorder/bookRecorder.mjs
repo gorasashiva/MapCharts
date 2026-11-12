@@ -30,7 +30,7 @@ import { pipeline } from 'node:stream/promises'
 import { createGzip } from 'node:zlib'
 import path from 'node:path'
 import { encodeBook, encodeGap, encodeMeta, encodeTrade, hourKey } from '../src/overlays/bookTape.ts'
-import { handleBookHeat } from './bookHeat.ts'
+import { handleBookHeat, rollupRange } from './heatRollup.ts'
 
 const SYMBOLS = (process.env.BOOK_SYMBOLS ?? 'XAUTUSD,BTCUSD,ETHUSD')
   .split(',')
@@ -319,6 +319,23 @@ async function main() {
   setInterval(() => void flush(), 2000)
   setInterval(() => void Promise.all(SYMBOLS.map(saveSessions)).catch(() => {}), 10_000)
   setInterval(() => void compactAndPrune(), 60_000)
+  // DOM Heatmap history: roll the raw book up into one row per minute. Runs shortly after start and then
+  // every 5 minutes; the first run back-fills from the raw files on disk, a day per pass.
+  const rollUp = async () => {
+    for (const sym of SYMBOLS) {
+      try {
+        for (let pass = 0; pass < 400; pass++) {
+          const r = await rollupRange(DIR, sym, Date.now())
+          if (r.minutes) log(`${sym} heat rollup +${r.minutes} min (${new Date(r.from).toISOString().slice(0, 16)}Z)`)
+          if (r.complete) break
+        }
+      } catch (err) {
+        log(`${sym} heat rollup failed: ${err?.message ?? err}`)
+      }
+    }
+  }
+  setTimeout(() => void rollUp(), 20_000)
+  setInterval(() => void rollUp(), 5 * 60_000)
   setInterval(() => log(SYMBOLS.map((s) => `${s} book ${state.get(s).books} · trades ${state.get(s).trades} · gaps ${state.get(s).gaps}`).join(' | ')), 300_000)
   const stop = async () => {
     await flush()
