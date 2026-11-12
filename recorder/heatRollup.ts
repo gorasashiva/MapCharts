@@ -21,13 +21,15 @@ import {
   binStepFor,
   heatGridFromRows,
   tradesAndBboFromRows,
+  mergeRows,
+  zoneReactions,
   type MinuteRow,
 } from '../src/overlays/bookHeatRollup.ts'
 
 const HOUR_MS = 3_600_000
 const DAY_MS = 86_400_000
 const MAX_LOOKBACK_HOURS = 24
-const MAX_QUERY_MS = 30 * DAY_MS
+const MAX_QUERY_MS = 400 * DAY_MS
 const SAMPLE_MS = 500
 
 async function readHourText(file: string): Promise<string | null> {
@@ -174,6 +176,10 @@ export interface HeatParams {
   cols: number
   rows: number
   minUsd: number
+  /** Strong zones to mark (after merging neighbouring levels). */
+  zones: number
+  /** Column width in ms (a chart timeframe); null = derived from `cols`. */
+  colMs: number | null
 }
 
 /** Parses and bounds the query; returns an error message when it is not usable. */
@@ -183,7 +189,7 @@ export function parseHeatParams(q: URLSearchParams, nowMs: number): HeatParams |
   const to = Number(q.get('to') ?? nowMs)
   const from = Number(q.get('from') ?? to - HOUR_MS)
   if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return 'from and to must be ms timestamps with to > from'
-  if (to - from > MAX_QUERY_MS) return 'window is capped at 30 days'
+  if (to - from > MAX_QUERY_MS) return 'window is capped at 400 days'
   const num = (k: string, def: number, lo: number, hi: number): number => {
     const v = Number(q.get(k) ?? def)
     return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : def
@@ -193,8 +199,10 @@ export function parseHeatParams(q: URLSearchParams, nowMs: number): HeatParams |
     from,
     to,
     cols: Math.round(num('cols', 600, 20, 1200)),
+    colMs: q.get('colMs') ? Math.max(MINUTE_MS, Math.ceil(num('colMs', MINUTE_MS, MINUTE_MS, 365 * DAY_MS) / MINUTE_MS) * MINUTE_MS) : null,
     rows: Math.round(num('rows', 200, 10, 400)),
     minUsd: num('minUsd', 0, 0, 1_000_000),
+    zones: Math.round(num('zones', 8, 0, 40)),
   }
 }
 
@@ -217,14 +225,21 @@ export interface HeatResponse {
   trades: [number, number, number, number, number][]
   /** Best bid and ask per column: [col, bid, ask] */
   bbo: [number, number, number][]
+  /** Zones: merged strong levels with their size, touches and reactions. */
+  zones: { lo: number; hi: number; usd: number; touches: number; reactions: number }[]
+  /** Reaction markers: [column, price of the zone centre, count] */
+  reacts: [number, number, number][]
 }
 
 /** The grid for one request, from the rollups. */
 export async function heatGrid(dir: string, p: HeatParams): Promise<HeatResponse> {
-  const colMs = Math.max(MINUTE_MS, Math.ceil((p.to - p.from) / p.cols / MINUTE_MS) * MINUTE_MS)
+  const derived = Math.max(MINUTE_MS, Math.ceil((p.to - p.from) / p.cols / MINUTE_MS) * MINUTE_MS)
+  // A requested timeframe is honoured, but never into more than 2000 columns.
+  const colMs = p.colMs ? Math.max(p.colMs, Math.ceil((p.to - p.from) / 2000 / MINUTE_MS) * MINUTE_MS) : derived
   const data = await readRollupRows(dir, p.symbol, p.from, p.to)
   const g = heatGridFromRows(data, { from: p.from, to: p.to, colMs, maxRows: p.rows, minUsd: p.minUsd })
   const tb = tradesAndBboFromRows(data, g, { from: p.from, to: p.to })
+  const zones = zoneBands(data, g, p)
   return {
     symbol: p.symbol,
     from: p.from,
@@ -241,6 +256,8 @@ export async function heatGrid(dir: string, p: HeatParams): Promise<HeatResponse
     cells: g.cells.map((c) => [c.col, c.row, c.bid ? 1 : 0, Math.round(c.value * 100) / 100]),
     trades: tb.trades.map((t) => [t.col, t.row, Math.round(t.buy), Math.round(t.sell), t.n]),
     bbo: tb.bbo.map((b) => [b.col, b.bid, b.ask]),
+    zones: zones.map((z) => ({ lo: z.lo, hi: z.hi, usd: z.usd, touches: z.touches, reactions: z.reactions })),
+    reacts: zones.flatMap((z) => z.reactCols.map(([c, n]) => [c, z.centre, n] as [number, number, number])),
   }
 }
 
@@ -253,7 +270,7 @@ const cache = new Map<string, { at: number; status: number; body: string }>()
 export async function handleBookHeat(url: URL, dir: string, nowMs = Date.now()): Promise<{ status: number; body: string }> {
   const p = parseHeatParams(url.searchParams, nowMs)
   if (typeof p === 'string') return { status: 400, body: JSON.stringify({ error: p }) }
-  const key = `${dir}|${p.symbol}|${p.from}|${p.to}|${p.cols}|${p.rows}|${p.minUsd}`
+  const key = `${dir}|${p.symbol}|${p.from}|${p.to}|${p.cols}|${p.rows}|${p.minUsd}|${p.colMs ?? ''}`
   const hit = cache.get(key)
   if (hit && nowMs - hit.at < CACHE_MS) return { status: hit.status, body: hit.body }
   const res = { status: 200, body: JSON.stringify(await heatGrid(dir, p)) }
@@ -268,4 +285,34 @@ export async function recordedSymbols(dir: string): Promise<string[]> {
   const out: string[] = []
   for (const n of names) if (/^[A-Z0-9]{3,20}$/.test(n) && (await earliestRawHour(dir, n)) !== null) out.push(n)
   return out
+}
+
+/** Strong zones from the grid: the top rows merged into bands, each with its reactions to price. */
+function zoneBands(
+  data: MinuteRow[],
+  g: { t0: number; colMs: number; cols: number; lo: number; step: number; rows: number; mid?: number | null; cells: { row: number; value: number }[] },
+  p: HeatParams,
+): { lo: number; hi: number; centre: number; usd: number; touches: number; reactions: number; reactCols: [number, number][] }[] {
+  if (p.zones <= 0 || g.cells.length === 0) return []
+  const totals = new Map<number, number>()
+  for (const c of g.cells) totals.set(c.row, (totals.get(c.row) ?? 0) + c.value)
+  // Zones a trader can act on are near the latest price: only levels within 3% of the last mid are ranked.
+  const mid = g.mid ?? null
+  const near = [...totals.entries()].filter(([row]) => mid === null || Math.abs(g.lo + (row + 0.5) * g.step - mid) <= mid * 0.03)
+  const top = near.sort((a, b) => b[1] - a[1]).slice(0, p.zones).map(([row]) => row)
+  return mergeRows(top, 2).map((rows) => {
+    const row0 = Math.min(...rows)
+    const row1 = Math.max(...rows)
+    const lo = g.lo + row0 * g.step
+    const hi = g.lo + (row1 + 1) * g.step
+    const usd = rows.reduce((s, r) => s + (totals.get(r) ?? 0), 0) / Math.max(1, g.cols)
+    // Reaction: price leaves the zone by 0.15% within 15 minutes of touching it.
+    const rx = zoneReactions(data, lo, hi, { reactPct: 0.0015, windowMin: 15 })
+    const byCol = new Map<number, number>()
+    for (const m of rx.reactMs) {
+      const col = Math.min(g.cols - 1, Math.max(0, Math.floor((m - g.t0) / g.colMs)))
+      byCol.set(col, (byCol.get(col) ?? 0) + 1)
+    }
+    return { lo, hi, centre: (lo + hi) / 2, usd, touches: rx.touches, reactions: rx.reactions, reactCols: [...byCol.entries()] }
+  })
 }

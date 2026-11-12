@@ -278,3 +278,47 @@ export function tradesAndBboFromRows(
     .map(([col, s]) => ({ col, bid: s.bid / s.n, ask: s.ask / s.n }))
   return { trades: [...tradeMap.values()], bbo }
 }
+
+/**
+ * Groups price rows that sit within `gap` rows of each other into one zone, e.g. [4,5,6,9] → [[4,5,6],[9]]
+ * with gap 2 → [[4,5,6,9]]. Input rows may be in any order; output groups are ascending.
+ */
+export function mergeRows(rows: number[], gap = 2): number[][] {
+  const sorted = [...new Set(rows)].sort((a, b) => a - b)
+  const groups: number[][] = []
+  for (const r of sorted) {
+    const last = groups[groups.length - 1]
+    if (last && r - last[last.length - 1] <= gap) last.push(r)
+    else groups.push([r])
+  }
+  return groups
+}
+
+/**
+ * How price reacted to a zone [lo, hi]: each time the mid enters the zone (a touch), the reaction is the
+ * first later minute, within `windowMin`, where the mid is `reactPct` of price beyond either edge.
+ */
+export function zoneReactions(rows: MinuteRow[], lo: number, hi: number, o: { reactPct: number; windowMin: number }): { touches: number; reactions: number; reactMs: number[] } {
+  let touches = 0
+  let reactions = 0
+  const reactMs: number[] = []
+  let wasIn = false
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]
+    const inside = r.mid >= lo && r.mid <= hi
+    if (inside && !wasIn) {
+      touches++
+      const dist = r.mid * o.reactPct
+      for (let j = i + 1; j < rows.length && rows[j].m - r.m <= o.windowMin * MINUTE_MS; j++) {
+        const p = rows[j].mid
+        if (p > hi + dist || p < lo - dist) {
+          reactions++
+          reactMs.push(rows[j].m)
+          break
+        }
+      }
+    }
+    wasIn = inside
+  }
+  return { touches, reactions, reactMs }
+}

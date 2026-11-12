@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MinuteAccumulator, heatGridFromRows, tradesAndBboFromRows, type MinuteRow } from './bookHeatRollup'
+import { MinuteAccumulator, heatGridFromRows, mergeRows, tradesAndBboFromRows, zoneReactions, type MinuteRow } from './bookHeatRollup'
 import type { BookSnap } from './domHeatmapModel'
 
 const M = 60_000
@@ -94,5 +94,22 @@ describe('heatGridFromRows', () => {
     const g = heatGridFromRows([row(5 * M, [[99, 1, 0]])], { from: 0, to: M, colMs: M, maxRows: 10, minUsd: 0 })
     expect(g.cells).toEqual([])
     expect(g.mid).toBeNull()
+  })
+})
+
+describe('zones and reactions', () => {
+  it('merges rows that are close together into one zone', () => {
+    expect(mergeRows([9, 4, 5, 6], 2)).toEqual([[4, 5, 6], [9]])
+    expect(mergeRows([4, 6, 8, 10], 2)).toEqual([[4, 6, 8, 10]])
+  })
+
+  it('counts touches and marks the reaction when price leaves the zone', () => {
+    const mk = (m: number, mid: number): MinuteRow => ({ m, step: 1, mid, bb: mid - 0.5, ba: mid + 0.5, bins: [], tr: [] })
+    // zone 100..101; price touches at minute 1, then moves 0.5% away (100.5 is 0.5% above 100.5? use 102)
+    const rows = [mk(0, 105), mk(M, 100.5), mk(2 * M, 100.6), mk(3 * M, 102), mk(4 * M, 100.5)]
+    const z = zoneReactions(rows, 100, 101, { reactPct: 0.005, windowMin: 15 })
+    expect(z.touches).toBe(2) // entered at minute 1 and again at minute 4
+    expect(z.reactions).toBe(1) // only the first touch moved away
+    expect(z.reactMs).toEqual([3 * M])
   })
 })
