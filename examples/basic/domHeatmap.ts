@@ -13,7 +13,7 @@
 import type { Candle, IndicatorDef, IndicatorParam } from '../../src/index'
 import type { Converters } from '../../src/drawings/types'
 import type { DepthSnapshot } from '../../src/data/types'
-import { buildHeatGrid, type BookSnap, type HeatGrid } from '../../src/overlays/domHeatmapModel'
+import { bandRuns, buildHeatGrid, levelLabels, strongRows, type BookSnap, type HeatGrid } from '../../src/overlays/domHeatmapModel'
 import { PALETTE, COL, colorOpts } from './flyingCpr'
 import { rgba, type Rect } from './canvasPlot'
 import type { CanvasIndicatorContext } from './shankyCombo'
@@ -72,7 +72,8 @@ export const domHeatmap: IndicatorDef = {
     num('rows', 'Price rows', 60, G_PRICE, 10, 200, 1),
     num('rangePct', 'Price band (± % of mid)', 1.5, G_PRICE, 0.2, 5, 0.1),
     num('minUsd', 'Ignore resting size below (USD)', 0, G_PRICE, 0, 1_000_000, 100),
-    num('opacity', 'Strongest cell opacity (%)', 85, 'Display', 10, 100, 1),
+    num('transparency', 'Transparency (%, higher = fainter)', 65, 'Display', 0, 95, 1),
+    num('levels', 'Strongest price levels shown', 6, G_PRICE, 1, 40, 1),
     colour('bidColor', 'Buy limits (below mid)', 'Green'),
     colour('askColor', 'Sell limits (above mid)', 'Purple'),
   ],
@@ -82,6 +83,8 @@ export const domHeatmap: IndicatorDef = {
 export interface DomHeatmapModel {
   grid: HeatGrid | null
   opacity: number
+  /** Price rows to draw (the strongest levels); null = every row. */
+  keep: Set<number> | null
   bidColor: string
   askColor: string
   waiting: string
@@ -90,6 +93,8 @@ export interface DomHeatmapModel {
 }
 
 const hexOf = (idx: number, fallback: string): string => (PALETTE[idx] ? PALETTE[idx][1] : fallback)
+/** Resting size in compact form: 995, 12.4K, 1.3M. */
+const fmtUsd = (v: number): string => (v >= 1e6 ? `${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `${(v / 1e3).toFixed(1)}K` : `${Math.round(v)}`)
 
 // ---------------------------------------------------------------------------
 // History: the recorder on the instance serves the recorded book as a grid (/book/heat).
@@ -117,6 +122,12 @@ interface HistoryState {
   error: string | null
 }
 const histories = new Map<string, HistoryState>()
+
+let onUpdate: (() => void) | null = null
+/** Called whenever a history refresh lands, so the chart can redraw the backdrop. */
+export function onDomHeatUpdate(fn: (() => void) | null): void {
+  onUpdate = fn
+}
 
 /** Base address of the recorder. Empty = same origin (nginx proxies /book/ on the instance). */
 function bookBase(): string {
@@ -166,16 +177,24 @@ function historyFor(symbol: string, p: Record<string, number>, now: number): His
       .finally(() => {
         entry.at = Date.now()
         entry.inflight = false
+        onUpdate?.()
       })
   }
   return st
 }
 
-export function computeDomHeatmapModel(_candles: Candle[], p: Record<string, number>, ctx: CanvasIndicatorContext): DomHeatmapModel {
+export function computeDomHeatmapModel(candles: Candle[], p: Record<string, number>, ctx: CanvasIndicatorContext): DomHeatmapModel {
+  const m = computeGridModel(candles, p, ctx)
+  // Only the strongest levels are drawn: a few bands, not every price row.
+  return m.grid ? { ...m, keep: strongRows(m.grid, Math.max(1, Math.round(p.levels ?? 6))) } : m
+}
+
+function computeGridModel(_candles: Candle[], p: Record<string, number>, ctx: CanvasIndicatorContext): DomHeatmapModel {
   const now = Date.now()
   const base: DomHeatmapModel = {
     grid: null,
-    opacity: Math.max(10, Math.min(100, p.opacity ?? 85)) / 100,
+    opacity: (100 - Math.max(0, Math.min(95, p.transparency ?? 65))) / 100,
+    keep: null,
     bidColor: hexOf(Math.round(p.bidColor ?? (COL as Record<string, number>).Green), '#4CAF50'),
     askColor: hexOf(Math.round(p.askColor ?? (COL as Record<string, number>).Purple), '#9C27B0'),
     waiting: '',
@@ -214,16 +233,26 @@ export function drawDomHeatmap(g: CanvasRenderingContext2D, conv: Converters, re
   const right = rect.x + rect.width
   if (m.grid) {
     const grid = m.grid
-    for (const c of grid.cells) {
-      const t = grid.t0 + c.col * grid.colMs
-      const x0 = conv.timeToX(t)
-      const x1 = conv.timeToX(t + grid.colMs)
+    const rows = m.keep ?? new Set(grid.cells.map((c) => c.row))
+    // One band per stretch of time where a strong level rested (DeepDOM look), not one block per cell.
+    for (const r of bandRuns(grid, rows)) {
+      const x0 = conv.timeToX(grid.t0 + r.c0 * grid.colMs)
+      const x1 = conv.timeToX(grid.t0 + (r.c1 + 1) * grid.colMs)
       if (x1 < rect.x || x0 > right) continue
-      const yTop = conv.priceToY(grid.lo + (c.row + 1) * grid.step)
-      const yBot = conv.priceToY(grid.lo + c.row * grid.step)
-      const a = m.opacity * Math.min(1, c.value / grid.scale)
-      g.fillStyle = rgba(c.bid ? m.bidColor : m.askColor, Math.max(0.05, a))
+      const yTop = conv.priceToY(grid.lo + (r.row + 1) * grid.step)
+      const yBot = conv.priceToY(grid.lo + r.row * grid.step)
+      g.fillStyle = rgba(r.bid ? m.bidColor : m.askColor, Math.max(0.05, m.opacity * (0.35 + 0.65 * r.intensity)))
       g.fillRect(x0, Math.min(yTop, yBot), Math.max(1, x1 - x0), Math.max(1, Math.abs(yBot - yTop) - 0.5))
+    }
+    // Size of each strong level, at the right edge (the DeepDOM volume column).
+    g.font = FONT
+    g.textAlign = 'right'
+    g.textBaseline = 'middle'
+    for (const l of levelLabels(grid, rows)) {
+      const y = conv.priceToY(grid.lo + (l.row + 0.5) * grid.step)
+      if (y < rect.y || y > rect.y + rect.height) continue
+      g.fillStyle = rgba(l.bid ? m.bidColor : m.askColor, 0.95)
+      g.fillText(fmtUsd(l.usd), right - 6, y)
     }
   }
   if (m.waiting) {

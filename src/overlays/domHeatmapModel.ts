@@ -140,3 +140,75 @@ export function replayBookSnaps(records: Iterable<BookTapeRecord>, o: { from: nu
   }
   return out
 }
+
+/**
+ * The strongest price levels of a grid: the `n` rows with the most resting size summed over the whole
+ * window. A row that is large and stays large beats one that spikes once.
+ */
+export function strongRows(grid: HeatGrid, n: number): Set<number> {
+  const total = new Map<number, number>()
+  for (const c of grid.cells) total.set(c.row, (total.get(c.row) ?? 0) + c.value)
+  const ranked = [...total.entries()].sort((a, b) => b[1] - a[1]).slice(0, Math.max(0, Math.round(n)))
+  return new Set(ranked.map(([row]) => row))
+}
+
+/** One continuous stretch of a level: consecutive time columns where the same side rested at the same price. */
+export interface BandRun {
+  row: number
+  bid: boolean
+  /** First and last column (inclusive). */
+  c0: number
+  c1: number
+  /** Mean cell value over the run, relative to the grid's full-intensity scale, clamped to 0..1. */
+  intensity: number
+}
+
+/** Runs of consecutive columns per (row, side), for the rows in `rows`. Drawn as bands, not cells. */
+export function bandRuns(grid: HeatGrid, rows: Set<number>): BandRun[] {
+  const byKey = new Map<string, { row: number; bid: boolean; cells: { col: number; value: number }[] }>()
+  for (const c of grid.cells) {
+    if (!rows.has(c.row)) continue
+    const key = `${c.row}|${c.bid ? 1 : 0}`
+    const e = byKey.get(key) ?? { row: c.row, bid: c.bid, cells: [] }
+    e.cells.push({ col: c.col, value: c.value })
+    byKey.set(key, e)
+  }
+  const runs: BandRun[] = []
+  for (const e of byKey.values()) {
+    e.cells.sort((a, b) => a.col - b.col)
+    let start = 0
+    for (let i = 1; i <= e.cells.length; i++) {
+      const breaks = i === e.cells.length || e.cells[i].col !== e.cells[i - 1].col + 1
+      if (!breaks) continue
+      const part = e.cells.slice(start, i)
+      const mean = part.reduce((s, c) => s + c.value, 0) / part.length
+      runs.push({
+        row: e.row,
+        bid: e.bid,
+        c0: part[0].col,
+        c1: part[part.length - 1].col,
+        intensity: Math.min(1, mean / grid.scale),
+      })
+      start = i
+    }
+  }
+  return runs
+}
+
+/** Size label for each strong level: its mean resting size over the window, on the side that dominates. */
+export function levelLabels(grid: HeatGrid, rows: Set<number>): { row: number; bid: boolean; usd: number }[] {
+  const per = new Map<number, { bid: number; ask: number }>()
+  for (const c of grid.cells) {
+    if (!rows.has(c.row)) continue
+    const e = per.get(c.row) ?? { bid: 0, ask: 0 }
+    if (c.bid) e.bid += c.value
+    else e.ask += c.value
+    per.set(c.row, e)
+  }
+  const cols = Math.max(1, grid.cols)
+  return [...per.entries()].map(([row, e]) => ({
+    row,
+    bid: e.bid >= e.ask,
+    usd: (e.bid >= e.ask ? e.bid : e.ask) / cols,
+  }))
+}

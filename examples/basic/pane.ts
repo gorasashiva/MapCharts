@@ -29,7 +29,8 @@ export interface PaneProvider {
 }
 import { resolveIndicator, getSignalSource, getCanvasSource, FULL_HISTORY_INDICATOR_IDS, type CanvasSource, type Signal } from './custom-indicators'
 import { sampleCandles } from './sample-candles'
-import { domHeatmap, ensureDomHeatFeed } from './domHeatmap'
+import { domHeatmap, ensureDomHeatFeed, computeDomHeatmapModel, drawDomHeatmap, onDomHeatUpdate } from './domHeatmap'
+import type { Converters } from '../../src/drawings/types'
 import TradeRainOverlay from '../../src/overlays/tradeRain'
 import OrderFlowOverlay from '../../src/overlays/orderflow'
 import BuySellPollOverlay from '../../src/overlays/buySellPoll'
@@ -2289,7 +2290,11 @@ export class ChartPane {
       const src = getCanvasSource(inst.defId)
       if (!src) continue
       // The DOM Heatmap samples the book itself; start that sampler once it is on.
-      if (inst.defId === domHeatmap.id) ensureDomHeatFeed(this.state.symbol, this.provider)
+      if (inst.defId === domHeatmap.id) {
+        // Drawn behind the candles by the engine backdrop (see domHeatBackdrop), not as an overlay.
+        ensureDomHeatFeed(this.state.symbol, this.provider)
+        continue
+      }
       const model = src.compute(this.candles, inst.params, cctx)
       this.canvasInds.push({ src, model, defId: inst.defId })
       // A Renko strategy (Renko Exhaustion Fade) fixes the chart's brick size to the one it trades.
@@ -2298,6 +2303,8 @@ export class ChartPane {
     }
     this.engine.setRenkoBoxSize(renkoBox) // no-op unless it changed; rebuilds bricks only on a Renko chart
     this.canvasVersion++
+    this.engine.setBackdrop(this.domHeatBackdrop())
+    onDomHeatUpdate(() => this.engine.setBackdrop(this.domHeatBackdrop()))
     if (hadCanvas !== this.canvasInds.length > 0) this.ensureOverlayLoop()
 
     // BUY/SELL signals only change on bar close, so this (often heavy) pass is
@@ -2311,6 +2318,19 @@ export class ChartPane {
       }
       this.signalsVersion++
       this.ensureOverlayLoop() // start/stop the overlay rAF based on signal presence
+    }
+  }
+
+  /**
+   * DOM Heatmap as the engine backdrop: drawn over the grid, under the candles and indicators, so the
+   * price stays visible. Recomputed at every engine draw, so a history refresh shows without a re-render.
+   */
+  private domHeatBackdrop(): ((g: CanvasRenderingContext2D, rect: { x: number; y: number; width: number; height: number }, conv: Converters) => void) | null {
+    const inst = this.state.indicators.find((i) => i.defId === domHeatmap.id && i.visible !== false)
+    if (!inst) return null
+    return (g, rect, conv) => {
+      const cctx = { symbol: this.state.symbol, chartType: this.state.chartType, interval: this.state.interval, renkoBox: this.engine.getRenkoBoxSize() }
+      drawDomHeatmap(g, conv, rect, this.candles, computeDomHeatmapModel(this.candles, inst.params, cctx), cctx)
     }
   }
 

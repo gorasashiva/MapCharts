@@ -284,6 +284,11 @@ export interface IChartEngine {
    * should re-query every animation frame rather than caching results.
    */
   getMainConverters(): Converters | null
+  /**
+   * Draws `fn` on the main pane every frame, after the grid and before the candles and indicators,
+   * so it sits behind the price. Pass null to remove it. Requests a redraw.
+   */
+  setBackdrop(fn: ((g: CanvasRenderingContext2D, rect: { x: number; y: number; width: number; height: number }, conv: Converters) => void) | null): void
   /** Geometry of the main price pane in CSS px (for clipping overlays). Null before first layout. */
   getMainPaneRect(): { x: number; y: number; width: number; height: number } | null
   /**

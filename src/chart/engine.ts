@@ -265,6 +265,8 @@ export function createChartEngine(container: HTMLElement, options: ChartEngineOp
   let eraser = false
   let stayInDrawing = false
   let watermark: string | null = null
+  /** Backdrop: drawn over the grid, under the candles and indicators (see setBackdrop). */
+  let backdrop: ((g: CanvasRenderingContext2D, rect: { x: number; y: number; width: number; height: number }, conv: Converters) => void) | null = null
   /** X where the main pane's OHLC legend row starts (a host title may sit left of it). */
   let legendInsetX = 10
   // ----- V4: appearance, scale modes, compare, sync, smooth motion -----
@@ -2502,6 +2504,13 @@ export function createChartEngine(container: HTMLElement, options: ChartEngineOp
       ctx.fillText(watermark, layout.plotWidth / 2, mainPane.top + mainPane.height / 2, layout.plotWidth - 40)
       ctx.restore()
     }
+    // Backdrop (e.g. DOM Heatmap): behind the candles and indicators.
+    if (backdrop && mainPane.height > 0 && layout.plotWidth > 0) {
+      ctx.save()
+      clipPane(mainPane, layout)
+      backdrop(ctx, { x: 0, y: mainPane.top, width: layout.plotWidth, height: mainPane.height }, liveConverters)
+      ctx.restore()
+    }
     if (hasData && mainPane.height > 0 && layout.plotWidth > 0) {
       ctx.save()
       clipPane(mainPane, layout)
@@ -2989,6 +2998,11 @@ export function createChartEngine(container: HTMLElement, options: ChartEngineOp
 
     setWatermark(text: string | null): void {
       watermark = text
+      invalidate()
+    },
+
+    setBackdrop(fn: ((g: CanvasRenderingContext2D, rect: { x: number; y: number; width: number; height: number }, conv: Converters) => void) | null): void {
+      backdrop = fn
       invalidate()
     },
 
