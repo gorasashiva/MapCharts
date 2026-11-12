@@ -2014,7 +2014,11 @@ export class ChartPane {
       ensureRightGutter: (px: number) => this.engine.ensureRightGutter(px),
       barX: (index: number) => this.engine.barCenterX(index),
     }
-    for (const ci of this.canvasInds) ci.src.draw(ctx, conv, rect, this.candles, ci.model, cctx)
+    for (const ci of this.canvasInds) {
+      // A canvas indicator declared as a pane (e.g. GEX Summary) paints into its own sub-pane below the chart.
+      const pane = resolveIndicator(ci.defId)?.placement === 'pane' ? this.separatePaneRect(ci.defId) : rect
+      if (pane) ci.src.draw(ctx, conv, pane, this.candles, ci.model, cctx)
+    }
     for (const s of this.signals) {
       const x = conv.timeToX(s.time)
       if (x < rect.x - 30 || x > rect.x + rect.width + 30) continue

@@ -125,10 +125,9 @@ export const gexSummary: IndicatorDef = {
   id: 'gex_summary',
   label: 'GEX Summary — net gamma regime over time (Delta options)',
   shortLabel: 'GEX Summary',
-  placement: 'overlay',
+  placement: 'pane',
   params: [
     ...dataParams(),
-    num('height', 'Strip height (px)', 90, G_DISPLAY, 40, 240, 5),
     colour('posColor', 'Positive gamma colour', 'Green'),
     colour('negColor', 'Negative gamma colour', 'Purple'),
   ],
@@ -139,7 +138,6 @@ export interface GexSummaryModel {
   net: number
   regime: Regime
   samples: SummarySample[]
-  height: number
   posColor: string
   negColor: string
   waiting: string
@@ -152,7 +150,6 @@ export function computeGexSummaryModel(candles: Candle[], p: Record<string, numb
     net: Number.NaN,
     regime: 'flat',
     samples: [],
-    height: Math.max(40, Math.round(p.height ?? 90)),
     posColor: hexOf(Math.round(p.posColor ?? colIdx('Green')), '#4CAF50'),
     negColor: hexOf(Math.round(p.negColor ?? colIdx('Purple')), '#9C27B0'),
     waiting: l.waiting,
@@ -172,11 +169,10 @@ export function drawGexSummary(g: CanvasRenderingContext2D, conv: Converters, re
   g.beginPath()
   g.rect(rect.x, rect.y, rect.width, rect.height)
   g.clip()
-  const h = Math.min(m.height, rect.height * 0.4)
-  const top = rect.y + rect.height - h
+  // The indicator has its own pane below the chart, so it fills the whole pane rect.
+  const h = rect.height
+  const top = rect.y
   const mid = top + h / 2
-  g.fillStyle = 'rgba(12, 14, 20, 0.55)'
-  g.fillRect(rect.x, top, rect.width, h)
 
   if (m.waiting) {
     drawWaiting(g, m.waiting, rect.x + rect.width - 8, mid, 'right', 'middle')
