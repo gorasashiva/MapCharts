@@ -32,7 +32,7 @@ const REFRESH_MS = 60_000
 
 // ---- Delta option chain (one fetch per underlying per minute, shared by all panes) ----
 const live = new Map<OptionUnderlying, { rows: ChainQuote[]; fetchedAt: number; triedAt: number; inflight: boolean; error: string | null }>()
-function liveChain(u: OptionUnderlying) {
+export function liveChain(u: OptionUnderlying) {
   let e = live.get(u)
   if (!e) {
     e = { rows: [], fetchedAt: 0, triedAt: 0, inflight: false, error: null }
@@ -59,7 +59,7 @@ function liveChain(u: OptionUnderlying) {
 }
 
 /** Chart symbol -> Delta options underlying (gold charts use the XAUT chain). */
-function underlyingFor(symbol: string): OptionUnderlying | null {
+export function underlyingFor(symbol: string): OptionUnderlying | null {
   const s = symbol.toUpperCase().replace(/^.*:/, '')
   if (s.startsWith('BTC')) return 'BTCUSD'
   if (s.startsWith('ETH')) return 'ETHUSD'

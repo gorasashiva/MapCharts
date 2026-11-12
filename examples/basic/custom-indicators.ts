@@ -26,6 +26,20 @@ import { theMap, computeTheMapModel, drawTheMap, type TheMapModel } from './theM
 import { theMapV2, computeTheMapV2Model, drawTheMapV2, type TheMapV2Model } from './theMapV2'
 import { theMapV3, computeTheMapV3Model, drawTheMapV3, mapV3StrategyTrades, type TheMapV3Model } from './theMapV3'
 import { gexSabers, computeGexSabersModel, drawGexSabers, type GexSabersModel } from './gexSabers'
+import {
+  gexSummary,
+  gexHeatmap,
+  gexProfileSplit,
+  computeGexSummaryModel,
+  drawGexSummary,
+  computeGexHeatmapModel,
+  drawGexHeatmap,
+  computeGexProfileModel,
+  drawGexProfileSplit,
+  type GexSummaryModel,
+  type GexHeatmapModel,
+  type GexProfileModel,
+} from './gexDeep'
 import { renkoFade, computeRenkoFadeModel, drawRenkoFade, renkoFadeTrades, type RenkoFadeModel } from './renkoFade'
 import { mtfCisd, computeMtfCisdModel, drawMtfCisd, type MtfCisdModel } from './mtfCisd'
 import { hlBlocks, computeHlBlocksModel, drawHlBlocks, type HlBlocksModel } from './hlBlocks'
@@ -1645,6 +1659,18 @@ const CANVAS_SOURCES: Record<string, CanvasSource> = {
     compute: computeGexSabersModel,
     draw: (g, conv, rect, candles, model, ctx) => drawGexSabers(g, conv, rect, candles, model as GexSabersModel, ctx),
   },
+  [gexSummary.id]: {
+    compute: computeGexSummaryModel,
+    draw: (g, conv, rect, candles, model, ctx) => drawGexSummary(g, conv, rect, candles, model as GexSummaryModel, ctx),
+  },
+  [gexHeatmap.id]: {
+    compute: computeGexHeatmapModel,
+    draw: (g, conv, rect, candles, model, ctx) => drawGexHeatmap(g, conv, rect, candles, model as GexHeatmapModel, ctx),
+  },
+  [gexProfileSplit.id]: {
+    compute: computeGexProfileModel,
+    draw: (g, conv, rect, candles, model, ctx) => drawGexProfileSplit(g, conv, rect, candles, model as GexProfileModel, ctx),
+  },
   [mtfCisd.id]: {
     compute: computeMtfCisdModel,
     draw: (g, conv, rect, candles, model, ctx) => drawMtfCisd(g, conv, rect, candles, model as MtfCisdModel, ctx),
@@ -1733,6 +1759,9 @@ export const CUSTOM_INDICATORS: IndicatorDef[] = [
   theMapV2,
   theMapV3,
   gexSabers,
+  gexSummary,
+  gexHeatmap,
+  gexProfileSplit,
   mtfCisd,
   hlBlocks,
   aiTrades,
