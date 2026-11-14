@@ -50,6 +50,7 @@ import { flyingCpr, computeFlyingCprModel, drawFlyingCpr, type FlyingCprModel } 
 import { tpoFade, computeTpoFadeModel, drawTpoFade, tpoFadeTrades, type TpoFadeModel } from './tpoFade'
 import { tpoTv, computeTpoTvModel, drawTpoTv, type TpoTvModel } from './tpoTv'
 import { tpoStrategy, computeTpoStrategyModel, drawTpoStrategy, type TpoStrategyModel } from './tpoStrategy'
+import { vpFade, computeVpFadeModel, drawVpFade, vpFadeTrades, type VpFadeModel } from './vpFade'
 import { bullseyeOf, computeBullseyeModel, drawBullseye, type BullseyeModel } from './bullseyeOf'
 import { fvgMid, computeFvgMidModel, drawFvgMid, type FvgMidModel } from './fvgMid'
 import { vwapEmaAngle, computeVwapEmaAngleModel, drawVwapEmaAngle, type VwapEmaAngleModel } from './vwapEmaAngle'
@@ -1571,7 +1572,7 @@ function salaarSignals(candles: Candle[], params: Record<string, number>): Signa
  *  leg a full recompute would find, silently freezing the plotted levels.
  *  See lionPivots/lionFindLeg above: the swing search needs pivots from the
  *  full loaded history, not just the last `warmupBars` candles. */
-export const FULL_HISTORY_INDICATOR_IDS = new Set<string>([lionIndicator.id, shadow1sc.id, zigzagFib.id, sessionReversal.id, rangeBreakout.id, renkoFade.id, sessionsIndicator.id, sessionsV2Indicator.id, marketStructure.id, mtfCisd.id, hlBlocks.id, aiTrades.id, bulbArrow.id, flyingCpr.id, tpoFade.id, fvgMid.id, tpoTv.id, tpoStrategy.id, bullseyeOf.id, vwapEmaAngle.id, dcCprBb.id, nyFade.id])
+export const FULL_HISTORY_INDICATOR_IDS = new Set<string>([lionIndicator.id, shadow1sc.id, zigzagFib.id, sessionReversal.id, rangeBreakout.id, renkoFade.id, sessionsIndicator.id, sessionsV2Indicator.id, marketStructure.id, mtfCisd.id, hlBlocks.id, aiTrades.id, bulbArrow.id, flyingCpr.id, tpoFade.id, fvgMid.id, tpoTv.id, tpoStrategy.id, vpFade.id, bullseyeOf.id, vwapEmaAngle.id, dcCprBb.id, nyFade.id])
 
 const SIGNAL_SOURCES: Record<string, (candles: Candle[], params: Record<string, number>) => Signal[]> = {
   [chotaPanditV3.id]: chotaSignals,
@@ -1678,6 +1679,11 @@ const CANVAS_SOURCES: Record<string, CanvasSource> = {
     compute: computeTpoStrategyModel,
     draw: (g, conv, rect, candles, model, ctx) => drawTpoStrategy(g, conv, rect, candles, model as TpoStrategyModel, ctx),
   },
+  [vpFade.id]: {
+    compute: computeVpFadeModel,
+    draw: (g, conv, rect, candles, model, ctx) => drawVpFade(g, conv, rect, candles, model as VpFadeModel, ctx),
+    strategy: { name: 'VP Fade 1:2 (prior VAH/VAL → POC)', trades: vpFadeTrades },
+  },
   [domHeatmap.id]: {
     compute: computeDomHeatmapModel,
     draw: (g, conv, rect, candles, model, ctx) => drawDomHeatmap(g, conv, rect, candles, model as DomHeatmapModel, ctx),
@@ -1779,6 +1785,7 @@ export const CUSTOM_INDICATORS: IndicatorDef[] = [
   gexProfileSplit,
   domHeatmap,
   tpoStrategy,
+  vpFade,
   bullseyeOf,
   mtfCisd,
   hlBlocks,
