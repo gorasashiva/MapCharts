@@ -50,6 +50,7 @@ import { flyingCpr, computeFlyingCprModel, drawFlyingCpr, type FlyingCprModel } 
 import { tpoFade, computeTpoFadeModel, drawTpoFade, tpoFadeTrades, type TpoFadeModel } from './tpoFade'
 import { tpoTv, computeTpoTvModel, drawTpoTv, type TpoTvModel } from './tpoTv'
 import { tpoStrategy, computeTpoStrategyModel, drawTpoStrategy, type TpoStrategyModel } from './tpoStrategy'
+import { bullseyeOf, computeBullseyeModel, drawBullseye, type BullseyeModel } from './bullseyeOf'
 import { fvgMid, computeFvgMidModel, drawFvgMid, type FvgMidModel } from './fvgMid'
 import { vwapEmaAngle, computeVwapEmaAngleModel, drawVwapEmaAngle, type VwapEmaAngleModel } from './vwapEmaAngle'
 import { dcCprBb, computeDcCprBbModel, drawDcCprBb, type DcCprBbModel } from './dcCprBb'
@@ -1570,7 +1571,7 @@ function salaarSignals(candles: Candle[], params: Record<string, number>): Signa
  *  leg a full recompute would find, silently freezing the plotted levels.
  *  See lionPivots/lionFindLeg above: the swing search needs pivots from the
  *  full loaded history, not just the last `warmupBars` candles. */
-export const FULL_HISTORY_INDICATOR_IDS = new Set<string>([lionIndicator.id, shadow1sc.id, zigzagFib.id, sessionReversal.id, rangeBreakout.id, renkoFade.id, sessionsIndicator.id, sessionsV2Indicator.id, marketStructure.id, mtfCisd.id, hlBlocks.id, aiTrades.id, bulbArrow.id, flyingCpr.id, tpoFade.id, fvgMid.id, tpoTv.id, tpoStrategy.id, vwapEmaAngle.id, dcCprBb.id, nyFade.id])
+export const FULL_HISTORY_INDICATOR_IDS = new Set<string>([lionIndicator.id, shadow1sc.id, zigzagFib.id, sessionReversal.id, rangeBreakout.id, renkoFade.id, sessionsIndicator.id, sessionsV2Indicator.id, marketStructure.id, mtfCisd.id, hlBlocks.id, aiTrades.id, bulbArrow.id, flyingCpr.id, tpoFade.id, fvgMid.id, tpoTv.id, tpoStrategy.id, bullseyeOf.id, vwapEmaAngle.id, dcCprBb.id, nyFade.id])
 
 const SIGNAL_SOURCES: Record<string, (candles: Candle[], params: Record<string, number>) => Signal[]> = {
   [chotaPanditV3.id]: chotaSignals,
@@ -1668,6 +1669,10 @@ const CANVAS_SOURCES: Record<string, CanvasSource> = {
   [gexHeatmap.id]: {
     compute: computeGexHeatmapModel,
     draw: (g, conv, rect, candles, model, ctx) => drawGexHeatmap(g, conv, rect, candles, model as GexHeatmapModel, ctx),
+  },
+  [bullseyeOf.id]: {
+    compute: computeBullseyeModel,
+    draw: (g, conv, rect, candles, model, ctx) => drawBullseye(g, conv, rect, candles, model as BullseyeModel, ctx),
   },
   [tpoStrategy.id]: {
     compute: computeTpoStrategyModel,
@@ -1774,6 +1779,7 @@ export const CUSTOM_INDICATORS: IndicatorDef[] = [
   gexProfileSplit,
   domHeatmap,
   tpoStrategy,
+  bullseyeOf,
   mtfCisd,
   hlBlocks,
   aiTrades,

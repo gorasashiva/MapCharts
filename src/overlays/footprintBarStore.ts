@@ -9,6 +9,10 @@ export interface FpBarFlow {
   sellLowShare: number
   /** Share of the bar's buying printed in its top two rows. */
   buyHighShare: number
+  /** Price per footprint row (row r spans r·rowSize … (r+1)·rowSize). */
+  rowSize?: number
+  /** Footprint rows of the bar: row index -> [bought, sold] (taker side), from exact trades. */
+  rows?: Map<number, [number, number]>
 }
 
 const store = new Map<string, Map<number, FpBarFlow>>()

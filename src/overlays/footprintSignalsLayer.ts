@@ -104,7 +104,7 @@ function barFlow(b: FpBar, rs: number): FpBarFlow {
     if (r < lowRow + 2) sellLow += se
     if (r > highRow - 2) buyHigh += bu
   }
-  return { delta, vol, sellLowShare: sell ? sellLow / sell : 0, buyHighShare: buy ? buyHigh / buy : 0 }
+  return { delta, vol, sellLowShare: sell ? sellLow / sell : 0, buyHighShare: buy ? buyHigh / buy : 0, rowSize: rs, rows: b.rows }
 }
 
 function niceStep(x: number): number {
