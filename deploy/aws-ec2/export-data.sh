@@ -117,7 +117,8 @@ $summary")"
 rid="$(api -X POST "https://api.github.com/repos/$REPO/releases" -d "$payload" | field id)"
 for part in "$work/$name".zip*; do
   echo "Uploading $(basename "$part") ($(du -h "$part" | cut -f1))…"
-  api -X POST -H 'Content-Type: application/zip' --data-binary @"$part" \
+  # -T streams the file from disk; --data-binary would load the whole part into RAM and get OOM-killed
+  api -X POST -H 'Content-Type: application/zip' -T "$part" \
     "https://uploads.github.com/repos/$REPO/releases/$rid/assets?name=$(basename "$part")" > /dev/null
 done
 echo
